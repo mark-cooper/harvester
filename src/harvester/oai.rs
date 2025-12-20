@@ -8,42 +8,45 @@ pub struct OaiConfig {
 
 #[derive(Debug)]
 pub struct OaiRecord {
-    endpoint: String,
-    identifier: String,
-    datestamp: String,
-    status: String,
-    last_checked_at: chrono::DateTime<chrono::Utc>,
-    message: Option<String>,
+    pub endpoint: String,
+    pub metadata_prefix: String,
+    pub identifier: String,
+    pub datestamp: String,
+    pub status: String,
+    pub last_checked_at: chrono::DateTime<chrono::Utc>,
+    pub message: Option<String>,
+    pub metadata: Option<String>,
+    pub summary: Option<String>,
 }
 
 impl OaiRecord {
-    pub fn new(endpoint: String, identifier: String, datestamp: String, status: String) -> Self {
+    pub fn new(
+        endpoint: String,
+        metadata_prefix: String,
+        identifier: String,
+        datestamp: String,
+        status: String,
+    ) -> Self {
         Self {
             endpoint,
+            metadata_prefix,
             identifier,
             datestamp,
             status,
             last_checked_at: chrono::Utc::now(),
             message: None,
+            metadata: None,
+            summary: None,
         }
     }
 
-    pub fn endpoint(&mut self, endpoint: String) -> &Self {
-        self.endpoint = endpoint;
-        self
-    }
-}
-
-impl From<Header> for OaiRecord {
-    fn from(value: Header) -> Self {
+    pub fn from_header(header: Header, config: &OaiConfig) -> Self {
         Self::new(
-            "".into(),
-            value.identifier,
-            value.datestamp,
-            match value.status {
-                Some(status) => status,
-                None => "pending".to_string(),
-            },
+            config.endpoint.clone(),
+            config.metadata_prefix.clone(),
+            header.identifier,
+            header.datestamp,
+            header.status.unwrap_or_else(|| "pending".to_string()),
         )
     }
 }

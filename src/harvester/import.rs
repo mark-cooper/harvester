@@ -32,9 +32,7 @@ fn fetch_records(config: &OaiConfig) -> anyhow::Result<Vec<OaiRecord>> {
 
                 if let Some(payload) = response.payload {
                     for header in payload.header {
-                        let mut record = OaiRecord::from(header);
-                        record.endpoint(config.endpoint.clone());
-                        records.push(record);
+                        records.push(OaiRecord::from_header(header, config));
                     }
                 }
             }

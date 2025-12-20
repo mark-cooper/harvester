@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS oai_records (
     endpoint TEXT NOT NULL,
+    metadata_prefix TEXT NOT NULL,
     identifier TEXT NOT NULL,
     datestamp TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -8,7 +9,7 @@ CREATE TABLE IF NOT EXISTS oai_records (
     summary TEXT NOT NULL DEFAULT '',
     summary_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', summary)) STORED,
     last_checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (endpoint, identifier)
+    PRIMARY KEY (endpoint, metadata_prefix, identifier)
 );
 
 CREATE INDEX IF NOT EXISTS idx_oai_records_status ON oai_records(status);
