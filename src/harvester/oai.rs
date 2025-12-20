@@ -42,7 +42,7 @@ impl From<Header> for OaiRecord {
             value.datestamp,
             match value.status {
                 Some(status) => status,
-                None => "active".to_string(),
+                None => "pending".to_string(),
             },
         )
     }
