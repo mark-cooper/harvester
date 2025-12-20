@@ -10,6 +10,7 @@ struct Cli {
     command: Commands,
 }
 
+// TODO: identify etc.
 #[derive(Debug, Subcommand)]
 enum Commands {
     #[command(arg_required_else_help = true)]
@@ -38,7 +39,7 @@ fn main() -> anyhow::Result<()> {
 
             harvester.import()?;
             harvester.download()?;
-            // harvester.characterize(rules)?;
+            // harvester.metadata(rules)?;
         }
     }
 

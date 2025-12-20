@@ -7,5 +7,5 @@ edition = "2024"
 anyhow = "1.0.100"
 chrono = "0.4.42"
 clap = { version = "4.5.53", features = ["derive"] }
-oai-pmh = "0.1.0"
+oai-pmh = "0.2.0"
 reqwest = "0.12.26"

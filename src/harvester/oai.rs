@@ -6,14 +6,15 @@ pub struct OaiConfig {
     pub metadata_prefix: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OaiRecord {
     endpoint: String,
     identifier: String,
     datestamp: String,
     status: String,
     last_checked_at: chrono::DateTime<chrono::Utc>,
-    message: String,
+    message: Option<String>,
+    metadata: Option<String>,
 }
 
 impl OaiRecord {
@@ -22,9 +23,10 @@ impl OaiRecord {
             endpoint,
             identifier,
             datestamp,
-            status: status,
+            status,
             last_checked_at: chrono::Utc::now(),
-            message: "".into(),
+            message: None,
+            metadata: None,
         }
     }
 

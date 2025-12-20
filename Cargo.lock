@@ -764,11 +764,10 @@ dependencies = [
 
 [[package]]
 name = "oai-pmh"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcb7bd5346e6228944773aeb1f29e778e69ab9507a4257ef69c6d63bba978a14"
+checksum = "7b82618bdc72693bfea1bd7f02be65563996d158cb1dfb35e7cafc2be11c96d3"
 dependencies = [
- "anyhow",
  "once_cell",
  "quick-xml",
  "regex",
