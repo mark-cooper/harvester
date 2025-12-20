@@ -1,6 +1,6 @@
-use super::{Harvester, HarvesterError};
+use super::Harvester;
 
 // TODO: returns result
-pub(super) fn run(harvester: &Harvester) -> Result<i32, HarvesterError> {
+pub(super) fn run(harvester: &Harvester) -> anyhow::Result<i32> {
     todo!()
 }

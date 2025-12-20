@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use clap::{Args, Parser, Subcommand, command};
 use harvester::{Harvester, OaiConfig};
 
@@ -25,19 +23,19 @@ struct HarvesterArgs {
     metadata_prefix: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     // TODO: init db connection pool
 
     match args.command {
         Commands::Harvest(cfg) => {
-            println!("Downloading records from {}", cfg.endpoint);
+            println!("Harvesting records from {}", cfg.endpoint);
             let config = OaiConfig {
                 endpoint: cfg.endpoint,
                 metadata_prefix: cfg.metadata_prefix,
             };
             let harvester = Harvester::new(config);
+
             harvester.import()?;
             harvester.download()?;
             // harvester.characterize(rules)?;
