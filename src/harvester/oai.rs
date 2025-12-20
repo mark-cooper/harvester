@@ -1,6 +1,6 @@
 use oai_pmh::client::response::Header;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OaiConfig {
     pub endpoint: String,
     pub metadata_prefix: String,
@@ -14,7 +14,6 @@ pub struct OaiRecord {
     status: String,
     last_checked_at: chrono::DateTime<chrono::Utc>,
     message: Option<String>,
-    metadata: Option<String>,
 }
 
 impl OaiRecord {
@@ -26,7 +25,6 @@ impl OaiRecord {
             status,
             last_checked_at: chrono::Utc::now(),
             message: None,
-            metadata: None,
         }
     }
 

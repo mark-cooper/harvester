@@ -1,5 +1,5 @@
 use super::Harvester;
 
-pub(super) fn run(harvester: &Harvester) -> anyhow::Result<()> {
+pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     todo!()
 }

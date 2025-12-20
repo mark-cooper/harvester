@@ -1,11 +1,15 @@
 use clap::{Args, Parser, Subcommand, command};
-use harvester::{Harvester, OaiConfig};
+use harvester::{Harvester, OaiConfig, db};
 
 /// OAI-PMH harvester
 #[derive(Debug, Parser)]
 #[command(name = "harvester")]
 #[command(about = "OAI-PMH harvester", long_about = None)]
 struct Cli {
+    /// Database connection URL
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: String,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -19,14 +23,22 @@ enum Commands {
 
 #[derive(Debug, Args)]
 struct HarvesterArgs {
+    /// OAI endpoint url
     endpoint: String,
+
+    /// OAI metadata prefix
     #[arg(short, long)]
     metadata_prefix: String,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Load .env first, then .env.local can override
+    let _ = dotenvy::from_filename(".env");
+    let _ = dotenvy::from_filename(".env.local");
+
     let args = Cli::parse();
-    // TODO: init db connection pool
+    let pool = db::create_pool(&args.database_url).await?;
 
     match args.command {
         Commands::Harvest(cfg) => {
@@ -35,11 +47,12 @@ fn main() -> anyhow::Result<()> {
                 endpoint: cfg.endpoint,
                 metadata_prefix: cfg.metadata_prefix,
             };
-            let harvester = Harvester::new(config);
+            let harvester = Harvester::new(config, pool);
 
-            harvester.import()?;
-            harvester.download()?;
-            // harvester.metadata(rules)?;
+            harvester.import().await?;
+            harvester.download().await?;
+            // harvester.metadata(rules).await?;
+            // harvester.summarize().await?;
         }
     }
 

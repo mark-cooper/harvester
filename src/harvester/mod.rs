@@ -4,26 +4,35 @@ mod metadata;
 mod oai;
 pub use oai::OaiConfig;
 
-#[derive(Debug)]
+use sqlx::PgPool;
+
 pub struct Harvester {
     config: OaiConfig,
-    // TODO: db pool
+    pool: PgPool,
 }
 
 impl Harvester {
-    pub fn new(config: OaiConfig) -> Self {
-        Self { config }
+    pub fn new(config: OaiConfig, pool: PgPool) -> Self {
+        Self { config, pool }
     }
 
-    pub fn download(&self) -> anyhow::Result<()> {
-        download::run(&self)
+    pub async fn download(&self) -> anyhow::Result<()> {
+        download::run(&self).await
     }
 
-    pub fn import(&self) -> anyhow::Result<()> {
-        import::run(&self)
+    pub async fn import(&self) -> anyhow::Result<()> {
+        import::run(&self).await
     }
 
-    pub fn metadata(&self, rules: String) -> anyhow::Result<()> {
-        metadata::run(&self, rules)
+    pub async fn metadata(&self, rules: String) -> anyhow::Result<()> {
+        metadata::run(&self, rules).await
+    }
+
+    pub fn config(&self) -> &OaiConfig {
+        &self.config
+    }
+
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 }
