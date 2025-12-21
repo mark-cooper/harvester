@@ -1,15 +1,14 @@
-use crate::harvester::oai::{OaiConfig, OaiRecord};
+use crate::harvester::oai::{OaiConfig, OaiRecordImport};
 
 use super::Harvester;
 
 use oai_pmh::{Client, ListIdentifiersArgs};
-use sqlx::PgPool;
 use tokio::sync::mpsc;
 
 const BATCH_SIZE: usize = 100;
 
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
-    let (tx, mut rx) = mpsc::channel::<Vec<OaiRecord>>(4);
+    let (tx, mut rx) = mpsc::channel::<Vec<OaiRecordImport>>(4);
 
     // Spawn blocking task for sync OAI-PMH fetching
     let fetch_handle = tokio::task::spawn_blocking({
@@ -19,7 +18,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
 
     let mut total_processed = 0;
     while let Some(batch) = rx.recv().await {
-        let count = batch_upsert_records(harvester.pool(), &batch).await?;
+        let count = batch_upsert_records(harvester, &batch).await?;
         total_processed += count;
     }
 
@@ -31,7 +30,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
 
 fn fetch_and_stream_records(
     config: &OaiConfig,
-    tx: mpsc::Sender<Vec<OaiRecord>>,
+    tx: mpsc::Sender<Vec<OaiRecordImport>>,
 ) -> anyhow::Result<()> {
     let client = Client::new(config.endpoint.as_str())?;
     client.identify()?;
@@ -47,7 +46,7 @@ fn fetch_and_stream_records(
                 }
                 if let Some(payload) = response.payload {
                     for header in payload.header {
-                        batch.push(OaiRecord::from_header(header, config));
+                        batch.push(OaiRecordImport::from(header));
 
                         if batch.len() >= BATCH_SIZE {
                             tx.blocking_send(std::mem::take(&mut batch))?;
@@ -68,24 +67,32 @@ fn fetch_and_stream_records(
     Ok(())
 }
 
-async fn batch_upsert_records(pool: &PgPool, records: &[OaiRecord]) -> anyhow::Result<usize> {
+async fn batch_upsert_records(
+    harvester: &Harvester,
+    records: &[OaiRecordImport],
+) -> anyhow::Result<usize> {
     if records.is_empty() {
         return Ok(0);
     }
 
-    let endpoints: Vec<_> = records.iter().map(|r| r.endpoint.as_str()).collect();
-    let prefixes: Vec<_> = records.iter().map(|r| r.metadata_prefix.as_str()).collect();
     let identifiers: Vec<_> = records.iter().map(|r| r.identifier.as_str()).collect();
     let datestamps: Vec<_> = records.iter().map(|r| r.datestamp.as_str()).collect();
     let statuses: Vec<_> = records.iter().map(|r| r.status.as_str()).collect();
+    let batch_len = records.len() as i32;
 
     let result = sqlx::query(
         "INSERT INTO oai_records (
             endpoint, metadata_prefix, identifier, datestamp, status, message, last_checked_at
         )
-        SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
-            ARRAY_FILL(''::text, ARRAY[CARDINALITY($1)]),
-            ARRAY_FILL(NOW(), ARRAY[CARDINALITY($1)]))
+        SELECT * FROM UNNEST(
+            ARRAY_FILL($1::text, ARRAY[$6]),
+            ARRAY_FILL($2::text, ARRAY[$6]),
+            $3::text[],
+            $4::text[],
+            $5::text[],
+            ARRAY_FILL(''::text, ARRAY[$6]),
+            ARRAY_FILL(NOW(), ARRAY[$6])
+        )
         ON CONFLICT (endpoint, metadata_prefix, identifier) DO UPDATE SET
             datestamp = EXCLUDED.datestamp,
             status = EXCLUDED.status,
@@ -94,12 +101,13 @@ async fn batch_upsert_records(pool: &PgPool, records: &[OaiRecord]) -> anyhow::R
         WHERE oai_records.status != 'failed'
             AND oai_records.datestamp != EXCLUDED.datestamp",
     )
-    .bind(&endpoints)
-    .bind(&prefixes)
+    .bind(&harvester.config.endpoint)
+    .bind(&harvester.config.metadata_prefix)
     .bind(&identifiers)
     .bind(&datestamps)
     .bind(&statuses)
-    .execute(pool)
+    .bind(batch_len)
+    .execute(&harvester.pool)
     .await?;
 
     Ok(result.rows_affected() as usize)

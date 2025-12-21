@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS oai_records (
     PRIMARY KEY (endpoint, metadata_prefix, identifier)
 );
 
-CREATE INDEX IF NOT EXISTS idx_oai_records_status ON oai_records(status);
-CREATE INDEX IF NOT EXISTS idx_oai_records_datestamp ON oai_records(datestamp);
+CREATE INDEX IF NOT EXISTS idx_oai_records_status ON oai_records(endpoint, metadata_prefix, status);
 CREATE INDEX IF NOT EXISTS idx_oai_records_metadata ON oai_records USING GIN (metadata);
 CREATE INDEX IF NOT EXISTS idx_oai_records_summary_tsv ON oai_records USING GIN (summary_tsv);
