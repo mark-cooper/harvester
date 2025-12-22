@@ -27,12 +27,4 @@ impl Harvester {
     pub async fn metadata(&self, rules: String) -> anyhow::Result<()> {
         metadata::run(&self, rules).await
     }
-
-    pub fn config(&self) -> &OaiConfig {
-        &self.config
-    }
-
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
-    }
 }

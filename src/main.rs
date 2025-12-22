@@ -1,3 +1,5 @@
+use std::env;
+
 use clap::{Args, Parser, Subcommand, command};
 use harvester::{Harvester, OaiConfig, db};
 
@@ -38,12 +40,14 @@ async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::from_filename(".env.local");
 
     let args = Cli::parse();
+    let cwd = env::current_dir()?; // TODO: support path arg?
     let pool = db::create_pool(&args.database_url).await?;
 
     match args.command {
         Commands::Harvest(cfg) => {
             println!("Harvesting records from {}", cfg.endpoint);
             let config = OaiConfig {
+                data_dir: cwd.join("data"),
                 endpoint: cfg.endpoint,
                 metadata_prefix: cfg.metadata_prefix,
             };

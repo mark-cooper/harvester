@@ -106,7 +106,8 @@ async fn download_record(
         Ok(response) => {
             if let Some(payload) = response.payload {
                 let metadata = &payload.record.metadata;
-                write_metadata_to_file(&record.path(), metadata).await?;
+                let path = PathBuf::from(harvester.config.data_dir.clone()).join(record.path());
+                write_metadata_to_file(path, metadata).await?;
                 update_record_available(harvester, &record.identifier).await?;
             }
         }
@@ -118,7 +119,7 @@ async fn download_record(
     Ok(())
 }
 
-async fn write_metadata_to_file(path: &PathBuf, metadata: &str) -> anyhow::Result<()> {
+async fn write_metadata_to_file(path: PathBuf, metadata: &str) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }

@@ -4,6 +4,7 @@ use oai_pmh::client::response::Header;
 
 #[derive(Debug, Clone)]
 pub struct OaiConfig {
+    pub data_dir: PathBuf,
     pub endpoint: String,
     pub metadata_prefix: String,
 }
@@ -19,8 +20,7 @@ pub struct OaiRecord {
 
 impl OaiRecord {
     pub fn path(&self) -> PathBuf {
-        PathBuf::from("data")
-            .join(&self.fingerprint[0..2])
+        PathBuf::from(&self.fingerprint[0..2])
             .join(&self.fingerprint[2..4])
             .join(format!("{}.xml", self.fingerprint))
     }
