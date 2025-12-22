@@ -81,7 +81,8 @@ async fn batch_upsert_records(
     let batch_len = records.len() as i32;
 
     let result = sqlx::query(
-        "INSERT INTO oai_records (
+        r#"
+        INSERT INTO oai_records (
             endpoint, metadata_prefix, identifier, datestamp, status, message, last_checked_at
         )
         SELECT * FROM UNNEST(
@@ -99,7 +100,8 @@ async fn batch_upsert_records(
             message = '',
             last_checked_at = EXCLUDED.last_checked_at
         WHERE oai_records.status != 'failed'
-            AND oai_records.datestamp != EXCLUDED.datestamp",
+        AND oai_records.datestamp != EXCLUDED.datestamp
+        "#,
     )
     .bind(&harvester.config.endpoint)
     .bind(&harvester.config.metadata_prefix)
