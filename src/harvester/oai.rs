@@ -1,9 +1,29 @@
+use std::path::PathBuf;
+
 use oai_pmh::client::response::Header;
 
 #[derive(Debug, Clone)]
 pub struct OaiConfig {
     pub endpoint: String,
     pub metadata_prefix: String,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct OaiRecord {
+    pub endpoint: String,
+    pub metadata_prefix: String,
+    pub identifier: String,
+    pub fingerprint: String,
+    pub status: String,
+}
+
+impl OaiRecord {
+    pub fn path(&self) -> PathBuf {
+        PathBuf::from("data")
+            .join(&self.fingerprint[0..2])
+            .join(&self.fingerprint[2..4])
+            .join(format!("{}.xml", self.fingerprint))
+    }
 }
 
 #[derive(Debug)]
@@ -31,12 +51,4 @@ impl From<Header> for OaiRecordImport {
             value.status.unwrap_or_else(|| "pending".to_string()),
         )
     }
-}
-
-#[derive(sqlx::FromRow)]
-pub struct OaiRecordStatus {
-    pub endpoint: String,
-    pub metadata_prefix: String,
-    pub identifier: String,
-    pub status: String,
 }

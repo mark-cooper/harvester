@@ -8,7 +8,8 @@ anyhow = "1.0.100"
 dotenvy = "0.15"
 chrono = "0.4.42"
 clap = { version = "4.5.53", features = ["derive", "env"] }
-oai-pmh = "0.2.0"
+oai-pmh = "0.3.0"
 reqwest = "0.12.26"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "macros"] }
 tokio = { version = "1", features = ["full"] }
+futures = "0.3.31"

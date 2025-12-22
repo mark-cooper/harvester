@@ -2,6 +2,9 @@ CREATE TABLE IF NOT EXISTS oai_records (
     endpoint TEXT NOT NULL,
     metadata_prefix TEXT NOT NULL,
     identifier TEXT NOT NULL,
+    fingerprint TEXT GENERATED ALWAYS AS (
+        left(encode(sha256((endpoint || ':' || metadata_prefix || ':' || identifier)::bytea), 'hex'), 24)
+    ) STORED,
     datestamp TEXT NOT NULL,
     status TEXT NOT NULL,
     message TEXT NOT NULL DEFAULT '',

@@ -1,69 +1,44 @@
-use crate::harvester::oai::{OaiConfig, OaiRecordImport};
+use crate::harvester::oai::OaiRecordImport;
 
 use super::Harvester;
 
 use oai_pmh::{Client, ListIdentifiersArgs};
-use tokio::sync::mpsc;
 
 const BATCH_SIZE: usize = 100;
 
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
-    let (tx, mut rx) = mpsc::channel::<Vec<OaiRecordImport>>(4);
+    let client = Client::new(&harvester.config.endpoint)?;
+    client.identify().await?;
 
-    // Spawn blocking task for sync OAI-PMH fetching
-    let fetch_handle = tokio::task::spawn_blocking({
-        let config = harvester.config().clone();
-        move || fetch_and_stream_records(&config, tx)
-    });
-
-    let mut total_processed = 0;
-    while let Some(batch) = rx.recv().await {
-        let count = batch_upsert_records(harvester, &batch).await?;
-        total_processed += count;
-    }
-
-    fetch_handle.await??;
-
-    println!("Processed {} records", total_processed);
-    Ok(())
-}
-
-fn fetch_and_stream_records(
-    config: &OaiConfig,
-    tx: mpsc::Sender<Vec<OaiRecordImport>>,
-) -> anyhow::Result<()> {
-    let client = Client::new(config.endpoint.as_str())?;
-    client.identify()?;
+    let args = ListIdentifiersArgs::new(&harvester.config.metadata_prefix);
+    let mut stream = client.list_identifiers(args).await?;
 
     let mut batch = Vec::with_capacity(BATCH_SIZE);
-    let args = ListIdentifiersArgs::new(config.metadata_prefix.as_str());
+    let mut total_processed = 0;
 
-    for response in client.list_identifiers(args)? {
-        match response {
-            Ok(response) => {
-                if let Some(e) = response.error {
-                    return Err(anyhow::anyhow!("OAI-PMH error: {:?}", e));
-                }
-                if let Some(payload) = response.payload {
-                    for header in payload.header {
-                        batch.push(OaiRecordImport::from(header));
+    while let Some(result) = stream.next().await {
+        let response = result?;
+        if let Some(e) = response.error {
+            return Err(anyhow::anyhow!("OAI-PMH error: {:?}", e));
+        }
 
-                        if batch.len() >= BATCH_SIZE {
-                            tx.blocking_send(std::mem::take(&mut batch))?;
-                            batch = Vec::with_capacity(BATCH_SIZE);
-                        }
-                    }
+        if let Some(payload) = response.payload {
+            for header in payload.header {
+                batch.push(OaiRecordImport::from(header));
+
+                if batch.len() >= BATCH_SIZE {
+                    total_processed += batch_upsert_records(harvester, &batch).await?;
+                    batch.clear();
                 }
             }
-            Err(e) => return Err(e.into()),
         }
     }
 
-    // Send remaining records
     if !batch.is_empty() {
-        tx.blocking_send(batch)?;
+        total_processed += batch_upsert_records(harvester, &batch).await?;
     }
 
+    println!("Processed {} records", total_processed);
     Ok(())
 }
 
