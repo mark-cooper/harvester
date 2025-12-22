@@ -14,6 +14,7 @@ const CONCURRENT_DOWNLOADS: usize = 10;
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     let client = Client::new(&harvester.config.endpoint)?;
     let mut last_identifier: Option<String> = None;
+    let mut total_downloaded = 0usize;
 
     loop {
         let batch = fetch_pending_records(harvester, last_identifier.as_deref()).await?;
@@ -22,13 +23,14 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
         }
 
         last_identifier = batch.last().map(|r| r.identifier.clone());
-        process_batch(&client, harvester, &batch).await?;
+        total_downloaded += process_batch(&client, harvester, &batch).await?;
 
         if batch.len() < BATCH_SIZE {
             break;
         }
     }
 
+    println!("Downloaded {} records", total_downloaded);
     Ok(())
 }
 
@@ -82,14 +84,15 @@ async fn process_batch(
     client: &Client,
     harvester: &Harvester,
     records: &[OaiRecord],
-) -> anyhow::Result<()> {
-    stream::iter(records)
+) -> anyhow::Result<usize> {
+    let results: Vec<_> = stream::iter(records)
         .map(|record| download_record(client, harvester, record))
         .buffer_unordered(CONCURRENT_DOWNLOADS)
-        .collect::<Vec<_>>()
+        .collect()
         .await;
 
-    Ok(())
+    let success_count = results.iter().filter(|r| r.is_ok()).count();
+    Ok(success_count)
 }
 
 async fn download_record(
