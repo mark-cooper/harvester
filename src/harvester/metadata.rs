@@ -1,12 +1,275 @@
-use std::{fs::File, path::PathBuf};
+use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 
-use crate::harvester::rules::load_rules;
+use crate::harvester::{oai::OaiRecordId, rules::RuleSet};
 
 use super::Harvester;
 
-pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result<()> {
-    let rules = load_rules(File::open(rules)?);
-    println!("{:?}", rules);
+const BATCH_SIZE: usize = 100;
 
-    todo!()
+pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result<()> {
+    let rules = RuleSet::load(File::open(rules)?)?;
+    let mut last_identifier: Option<String> = None;
+    let mut total_processed = 0usize;
+
+    loop {
+        let batch = fetch_available_records(harvester, last_identifier.as_deref()).await?;
+        if batch.is_empty() {
+            break;
+        }
+
+        last_identifier = batch.last().map(|r| r.identifier.clone());
+
+        for record in &batch {
+            let path = harvester.config.data_dir.join(record.path());
+            let file = std::fs::File::open(path)?;
+            match extract_metadata(&file, &rules) {
+                Ok(metadata) => {
+                    update_record_metadata(harvester, &record.identifier, metadata).await?;
+                    total_processed += 1;
+                }
+                Err(e) => {
+                    update_record_failed(harvester, &record.identifier, &e.to_string()).await?;
+                }
+            }
+        }
+
+        if batch.len() < BATCH_SIZE {
+            break;
+        }
+    }
+
+    println!("Extracted metadata for {} records", total_processed);
+    Ok(())
+}
+
+async fn fetch_available_records(
+    harvester: &Harvester,
+    last_identifier: Option<&str>,
+) -> anyhow::Result<Vec<OaiRecordId>> {
+    Ok(match last_identifier {
+        Some(last_id) => {
+            sqlx::query_as!(
+                OaiRecordId,
+                r#"
+                SELECT identifier, fingerprint AS "fingerprint!"
+                FROM oai_records
+                WHERE endpoint = $1
+                  AND metadata_prefix = $2
+                  AND identifier > $3
+                  AND status = 'available'
+                ORDER BY identifier
+                LIMIT 100
+                "#,
+                &harvester.config.endpoint,
+                &harvester.config.metadata_prefix,
+                last_id
+            )
+            .fetch_all(&harvester.pool)
+            .await?
+        }
+        None => {
+            sqlx::query_as!(
+                OaiRecordId,
+                r#"
+                SELECT identifier, fingerprint AS "fingerprint!"
+                FROM oai_records
+                WHERE endpoint = $1
+                  AND metadata_prefix = $2
+                  AND status = 'available'
+                ORDER BY identifier
+                LIMIT 100
+                "#,
+                &harvester.config.endpoint,
+                &harvester.config.metadata_prefix,
+            )
+            .fetch_all(&harvester.pool)
+            .await?
+        }
+    })
+}
+
+fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_json::Value> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+    use std::io::BufReader;
+
+    let buf_reader = BufReader::new(reader);
+    let mut reader = Reader::from_reader(buf_reader);
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    let mut stack: Vec<String> = Vec::new();
+    let mut current_text = String::new();
+    let mut buf = Vec::new();
+
+    // Skip these elements entirely (dsc contains container lists, often 90%+ of file)
+    const SKIP_ELEMENTS: &[&str] = &["dsc"];
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
+                if SKIP_ELEMENTS.contains(&name.as_str()) {
+                    reader.read_to_end_into(e.name(), &mut Vec::new())?;
+                } else {
+                    stack.push(name);
+                    current_text.clear();
+                }
+            }
+            Ok(Event::Text(e)) => {
+                let decoded = e
+                    .decode()
+                    .map_err(|err| anyhow::anyhow!("XML decode error: {}", err))?;
+                current_text.push_str(&decoded);
+            }
+            Ok(Event::End(_)) => {
+                let text = current_text.trim();
+                if !text.is_empty() {
+                    if let Some(terminal) = stack.last() {
+                        for rule in rules.by_terminal(terminal) {
+                            if stack_matches_path(&stack, &rule.path) {
+                                result
+                                    .entry(rule.key.clone())
+                                    .or_default()
+                                    .push(text.to_string());
+                            }
+                        }
+                    }
+                }
+                stack.pop();
+                current_text.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(anyhow::anyhow!("XML parse error: {}", e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    // Check for required fields
+    for rule in rules.required() {
+        if result.get(&rule.key).map_or(true, |v| v.is_empty()) {
+            return Err(anyhow::anyhow!("Required field '{}' is empty", rule.key));
+        }
+    }
+
+    // Convert to JSON with values as arrays
+    let json_map: serde_json::Map<_, _> = result
+        .into_iter()
+        .map(|(k, v)| (k, serde_json::json!(v)))
+        .collect();
+
+    Ok(serde_json::Value::Object(json_map))
+}
+
+/// Check if element stack ends with the given path
+/// e.g., stack ["ead", "archdesc", "repository", "corpname"] matches path ["repository", "corpname"]
+fn stack_matches_path(stack: &[String], path: &[String]) -> bool {
+    if path.len() > stack.len() {
+        return false;
+    }
+    stack
+        .iter()
+        .rev()
+        .zip(path.iter().rev())
+        .all(|(s, p)| s == p)
+}
+
+async fn update_record_metadata(
+    harvester: &Harvester,
+    identifier: &str,
+    metadata: serde_json::Value,
+) -> anyhow::Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE oai_records
+        SET metadata = $4, last_checked_at = NOW()
+        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
+        "#,
+        &harvester.config.endpoint,
+        &harvester.config.metadata_prefix,
+        identifier,
+        metadata
+    )
+    .execute(&harvester.pool)
+    .await?;
+    Ok(())
+}
+
+async fn update_record_failed(
+    harvester: &Harvester,
+    identifier: &str,
+    message: &str,
+) -> anyhow::Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE oai_records
+        SET status = 'failed', message = $4, last_checked_at = NOW()
+        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
+        "#,
+        &harvester.config.endpoint,
+        &harvester.config.metadata_prefix,
+        identifier,
+        message
+    )
+    .execute(&harvester.pool)
+    .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    #[test]
+    fn test_extract_metadata() {
+        let rules_csv = "\
+title,unittitle,required
+unit_id,unitid,required
+creator,origination/persname,
+date,unitdate,
+repository,repository/corpname,required
+extent,extent,
+";
+
+        let rules = RuleSet::load(rules_csv.as_bytes()).unwrap();
+        let file = File::open("fixtures/ead.xml").unwrap();
+        let metadata = extract_metadata(file, &rules).unwrap();
+
+        // Check required fields are extracted
+        assert_eq!(metadata["title"], serde_json::json!(["ANW-1805 test"]));
+        assert_eq!(
+            metadata["repository"],
+            serde_json::json!(["Allen Doe Research Center"])
+        );
+
+        // unitid appears multiple times in the fixture
+        let unit_ids = metadata["unit_id"].as_array().unwrap();
+        assert!(unit_ids.contains(&serde_json::json!("MSS54321")));
+
+        // Check optional field
+        assert_eq!(metadata["date"], serde_json::json!(["1950-1960"]));
+
+        // extent is in physdesc, not directly under did
+        assert_eq!(metadata["extent"], serde_json::json!(["2 Linear Feet"]));
+
+        // creator/origination/persname is not in the fixture
+        assert!(metadata.get("creator").is_none());
+    }
+
+    #[test]
+    fn test_extract_metadata_missing_required() {
+        let rules_csv = "\
+title,unittitle,required
+nonexistent,nonexistent/field,required
+";
+
+        let rules = RuleSet::load(rules_csv.as_bytes()).unwrap();
+        let file = File::open("fixtures/ead.xml").unwrap();
+        let result = extract_metadata(file, &rules);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("nonexistent"));
+        assert!(err.contains("empty"));
+    }
 }

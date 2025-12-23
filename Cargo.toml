@@ -14,3 +14,5 @@ oai-pmh = "0.3.0"
 reqwest = "0.12.26"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "macros"] }
 tokio = { version = "1", features = ["full"] }
+quick-xml = "0.38.4"
+serde_json = "1.0.146"

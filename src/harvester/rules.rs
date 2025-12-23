@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::{collections::HashMap, io::Read};
 
 #[derive(Debug)]
 pub struct Rule {
@@ -7,29 +7,59 @@ pub struct Rule {
     pub required: bool,
 }
 
-pub fn load_rules(data: impl Read) -> anyhow::Result<Vec<Rule>> {
-    let mut rules = Vec::new();
+#[derive(Debug)]
+pub struct RuleSet {
+    rules: Vec<Rule>,
+    by_terminal: HashMap<String, Vec<usize>>,
+}
 
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .from_reader(data);
+impl RuleSet {
+    pub fn load(reader: impl Read) -> anyhow::Result<Self> {
+        let mut rules = Vec::new();
+        let mut by_terminal: HashMap<String, Vec<usize>> = HashMap::new();
 
-    for record in reader.records() {
-        let record = record?;
-        let key = record[0].to_string();
-        let path_str = &record[1];
-        let required = record.get(2).map(|s| s == "required").unwrap_or(false);
+        let mut csv_reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(reader);
 
-        let path: Vec<String> = path_str.split('/').map(|s| s.to_string()).collect();
+        for record in csv_reader.records() {
+            let record = record?;
+            let key = record[0].to_string();
+            let path_str = &record[1];
+            let required = record.get(2).map(|s| s == "required").unwrap_or(false);
 
-        rules.push(Rule {
-            key,
-            path,
-            required,
-        });
+            let path: Vec<String> = path_str.split('/').map(|s| s.to_string()).collect();
+
+            if let Some(terminal) = path.last() {
+                by_terminal
+                    .entry(terminal.clone())
+                    .or_default()
+                    .push(rules.len());
+            }
+
+            rules.push(Rule {
+                key,
+                path,
+                required,
+            });
+        }
+
+        Ok(Self { rules, by_terminal })
     }
 
-    Ok(rules)
+    /// Returns rules whose path ends with the given terminal element
+    pub fn by_terminal(&self, terminal: &str) -> impl Iterator<Item = &Rule> {
+        self.by_terminal
+            .get(terminal)
+            .into_iter()
+            .flatten()
+            .map(|&idx| &self.rules[idx])
+    }
+
+    /// Returns rules marked as required
+    pub fn required(&self) -> impl Iterator<Item = &Rule> {
+        self.rules.iter().filter(|r| r.required)
+    }
 }
 
 #[cfg(test)]
@@ -38,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_load_rules() {
-        let rules = "\
+        let csv = "\
 title,unittitle,required
 unit_id,unitid,required
 creator,origination/persname,
@@ -47,32 +77,27 @@ repository,repository/corpname,required
 extent,extent,
 ";
 
-        let rules = load_rules(rules.as_bytes()).unwrap();
+        let ruleset = RuleSet::load(csv.as_bytes()).unwrap();
 
-        assert_eq!(rules.len(), 6);
+        // Test by_terminal lookup
+        let corpname_rules: Vec<_> = ruleset.by_terminal("corpname").collect();
+        assert_eq!(corpname_rules.len(), 1);
+        assert_eq!(corpname_rules[0].key, "repository");
+        assert_eq!(corpname_rules[0].path, vec!["repository", "corpname"]);
 
-        assert_eq!(rules[0].key, "title");
-        assert_eq!(rules[0].path, vec!["unittitle"]);
-        assert!(rules[0].required);
+        let persname_rules: Vec<_> = ruleset.by_terminal("persname").collect();
+        assert_eq!(persname_rules.len(), 1);
+        assert_eq!(persname_rules[0].key, "creator");
 
-        assert_eq!(rules[1].key, "unit_id");
-        assert_eq!(rules[1].path, vec!["unitid"]);
-        assert!(rules[1].required);
+        // Test required iterator
+        let required: Vec<_> = ruleset.required().collect();
+        assert_eq!(required.len(), 3);
+        assert!(required.iter().all(|r| r.required));
 
-        assert_eq!(rules[2].key, "creator");
-        assert_eq!(rules[2].path, vec!["origination", "persname"]);
-        assert!(!rules[2].required);
-
-        assert_eq!(rules[3].key, "date");
-        assert_eq!(rules[3].path, vec!["unitdate"]);
-        assert!(!rules[3].required);
-
-        assert_eq!(rules[4].key, "repository");
-        assert_eq!(rules[4].path, vec!["repository", "corpname"]);
-        assert!(rules[4].required);
-
-        assert_eq!(rules[5].key, "extent");
-        assert_eq!(rules[5].path, vec!["extent"]);
-        assert!(!rules[5].required);
+        // Verify specific required rules
+        let required_keys: Vec<_> = required.iter().map(|r| r.key.as_str()).collect();
+        assert!(required_keys.contains(&"title"));
+        assert!(required_keys.contains(&"unit_id"));
+        assert!(required_keys.contains(&"repository"));
     }
 }
