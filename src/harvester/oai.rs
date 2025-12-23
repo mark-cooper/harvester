@@ -9,16 +9,14 @@ pub struct OaiConfig {
     pub metadata_prefix: String,
 }
 
+/// Record info needed for download and metadata extraction
 #[derive(sqlx::FromRow)]
-pub struct OaiRecord {
-    pub endpoint: String,
-    pub metadata_prefix: String,
+pub struct OaiRecordId {
     pub identifier: String,
     pub fingerprint: String,
-    pub status: String,
 }
 
-impl OaiRecord {
+impl OaiRecordId {
     pub fn path(&self) -> PathBuf {
         PathBuf::from(&self.fingerprint[0..2])
             .join(&self.fingerprint[2..4])
@@ -26,6 +24,7 @@ impl OaiRecord {
     }
 }
 
+/// Record info needed for import
 #[derive(Debug)]
 pub struct OaiRecordImport {
     pub identifier: String,

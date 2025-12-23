@@ -4,7 +4,7 @@ use futures::stream::{self, StreamExt};
 use oai_pmh::{Client, GetRecordArgs};
 use tokio::fs;
 
-use crate::harvester::oai::OaiRecord;
+use crate::harvester::oai::OaiRecordId;
 
 use super::Harvester;
 
@@ -37,13 +37,13 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
 async fn fetch_pending_records(
     harvester: &Harvester,
     last_identifier: Option<&str>,
-) -> anyhow::Result<Vec<OaiRecord>> {
+) -> anyhow::Result<Vec<OaiRecordId>> {
     Ok(match last_identifier {
         Some(last_id) => {
             sqlx::query_as!(
-                OaiRecord,
+                OaiRecordId,
                 r#"
-                SELECT endpoint, metadata_prefix, identifier, fingerprint AS "fingerprint!", status
+                SELECT identifier, fingerprint AS "fingerprint!"
                 FROM oai_records
                 WHERE endpoint = $1
                   AND metadata_prefix = $2
@@ -61,9 +61,9 @@ async fn fetch_pending_records(
         }
         None => {
             sqlx::query_as!(
-                OaiRecord,
+                OaiRecordId,
                 r#"
-                SELECT endpoint, metadata_prefix, identifier, fingerprint AS "fingerprint!", status
+                SELECT identifier, fingerprint AS "fingerprint!"
                 FROM oai_records
                 WHERE endpoint = $1
                   AND metadata_prefix = $2
@@ -83,7 +83,7 @@ async fn fetch_pending_records(
 async fn process_batch(
     client: &Client,
     harvester: &Harvester,
-    records: &[OaiRecord],
+    records: &[OaiRecordId],
 ) -> anyhow::Result<usize> {
     let results: Vec<_> = stream::iter(records)
         .map(|record| download_record(client, harvester, record))
@@ -98,7 +98,7 @@ async fn process_batch(
 async fn download_record(
     client: &Client,
     harvester: &Harvester,
-    record: &OaiRecord,
+    record: &OaiRecordId,
 ) -> anyhow::Result<()> {
     let args = GetRecordArgs::new(&record.identifier, &harvester.config.metadata_prefix);
 
