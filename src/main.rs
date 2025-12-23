@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 use clap::{Args, Parser, Subcommand, command};
 use harvester::{Harvester, OaiConfig, db};
@@ -31,6 +31,10 @@ struct HarvesterArgs {
     /// OAI metadata prefix
     #[arg(short, long)]
     metadata_prefix: String,
+
+    /// XML scanning rules file
+    #[arg(short, long)]
+    rules: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -55,7 +59,12 @@ async fn main() -> anyhow::Result<()> {
 
             harvester.import().await?;
             harvester.download().await?;
-            // harvester.metadata(rules).await?;
+
+            if let Some(rules) = cfg.rules {
+                rules.try_exists().expect("rules file not found");
+                harvester.metadata(rules).await?;
+            }
+
             // harvester.summarize().await?;
         }
     }

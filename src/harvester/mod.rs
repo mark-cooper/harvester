@@ -2,6 +2,10 @@ mod download;
 mod import;
 mod metadata;
 mod oai;
+mod rules;
+
+use std::path::PathBuf;
+
 pub use oai::OaiConfig;
 
 use sqlx::PgPool;
@@ -24,7 +28,7 @@ impl Harvester {
         import::run(&self).await
     }
 
-    pub async fn metadata(&self, rules: String) -> anyhow::Result<()> {
+    pub async fn metadata(&self, rules: PathBuf) -> anyhow::Result<()> {
         metadata::run(&self, rules).await
     }
 }
