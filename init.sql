@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS oai_records (
     metadata JSONB NOT NULL DEFAULT '{}',
     summary TEXT NOT NULL DEFAULT '',
     summary_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', summary)) STORED,
+    version INTEGER NOT NULL DEFAULT 1,
     last_checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (endpoint, metadata_prefix, identifier)
 );

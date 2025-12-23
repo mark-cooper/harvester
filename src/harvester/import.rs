@@ -73,6 +73,7 @@ async fn batch_upsert_records(
             datestamp = EXCLUDED.datestamp,
             status = EXCLUDED.status,
             message = '',
+            version = oai_records.version + 1,
             last_checked_at = EXCLUDED.last_checked_at
         WHERE oai_records.status != 'failed'
         AND oai_records.datestamp != EXCLUDED.datestamp
