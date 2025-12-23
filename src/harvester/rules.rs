@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::io::Read;
 
 #[derive(Debug)]
 pub struct Rule {
@@ -7,12 +7,12 @@ pub struct Rule {
     pub required: bool,
 }
 
-pub fn load_rules(path: PathBuf) -> anyhow::Result<Vec<Rule>> {
+pub fn load_rules(data: impl Read) -> anyhow::Result<Vec<Rule>> {
     let mut rules = Vec::new();
 
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
-        .from_path(path)?;
+        .from_reader(data);
 
     for record in reader.records() {
         let record = record?;
@@ -35,21 +35,19 @@ pub fn load_rules(path: PathBuf) -> anyhow::Result<Vec<Rule>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_load_rules() {
-        let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(temp_file, "title,unittitle,required").unwrap();
-        writeln!(temp_file, "unit_id,unitid,required").unwrap();
-        writeln!(temp_file, "creator,origination/persname,").unwrap();
-        writeln!(temp_file, "date,unitdate,").unwrap();
-        writeln!(temp_file, "repository,repository/corpname,required").unwrap();
-        writeln!(temp_file, "extent,extent,").unwrap();
-        temp_file.flush().unwrap();
+        let rules = "\
+title,unittitle,required
+unit_id,unitid,required
+creator,origination/persname,
+date,unitdate,
+repository,repository/corpname,required
+extent,extent,
+";
 
-        let rules = load_rules(temp_file.path().to_path_buf()).unwrap();
+        let rules = load_rules(rules.as_bytes()).unwrap();
 
         assert_eq!(rules.len(), 6);
 

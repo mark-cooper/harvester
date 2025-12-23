@@ -647,7 +647,6 @@ dependencies = [
  "oai-pmh",
  "reqwest",
  "sqlx",
- "tempfile",
  "tokio",
 ]
 

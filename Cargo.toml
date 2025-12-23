@@ -13,5 +13,4 @@ futures = "0.3.31"
 oai-pmh = "0.3.0"
 reqwest = "0.12.26"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "macros"] }
-tempfile = "3.23.0"
 tokio = { version = "1", features = ["full"] }
