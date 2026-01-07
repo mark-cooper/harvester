@@ -2,7 +2,17 @@
 
 OAI-PMH record harvester.
 
-The harvester requires a postgres connection. The default connection config is in `.env` but can be overriden by `.env.local`. Run `init.sql` in the target database to setup the required table.
+The harvester requires a postgres connection. The default connection config is in `.env` but can be overriden by `.env.local`. To setup:
+
+```bash
+cargo install --version="~0.8" sqlx-cli \
+    --no-default-features \
+    --features rustls,postgres
+
+./scripts/init_db.sh
+```
+
+This will create the database and table.
 
 ## Running locally
 

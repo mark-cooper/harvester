@@ -1,4 +1,5 @@
-CREATE TABLE IF NOT EXISTS oai_records (
+-- Create oai records table
+CREATE TABLE oai_records (
     endpoint TEXT NOT NULL,
     metadata_prefix TEXT NOT NULL,
     identifier TEXT NOT NULL,
