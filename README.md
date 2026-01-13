@@ -20,16 +20,16 @@ The latter should be committed to version control.
 Using cargo for harvesting:
 
 ```bash
-cargo run -- harvest -m oai_ead -r ~/rules.txt https://test.archivesspace.org/oai
+cargo run -- harvest -m oai_ead -r fixtures/rules.txt https://test.archivesspace.org/oai
 ```
 
 Using cargo for indexing (ArcLight):
 
 ```bash
 cargo run -- index \
-    lyrasis-special-collections \
+    allen-doe-research-center \
     "https://test.archivesspace.org/oai" \
-    "Lyrasis Special Collections" \
+    "Allen Doe Research Center" \
     --configuration=traject/ead2_config.rb
 ```
 
