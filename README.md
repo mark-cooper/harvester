@@ -12,7 +12,7 @@ cargo install --version="~0.8" sqlx-cli \
 ./scripts/init_db.sh
 ```
 
-This will create the database and table.
+This will create the database and table and regenerate sqlx query files if needed.
 
 ## Running locally
 
