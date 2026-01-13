@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf, process::Command};
+use std::{env, fs::exists, path::PathBuf, process::Command};
 
 use clap::{Args, Parser, Subcommand, command};
 use harvester::{Harvester, Indexer, IndexerConfig, OaiConfig, db};
@@ -51,6 +51,10 @@ struct IndexerArgs {
     /// Source OAI repository name
     oai_repository: String,
 
+    /// Traject configuration file path
+    #[arg(short, long, default_value = "traject/ead2_config.rb")]
+    configuration: PathBuf,
+
     /// Solr url
     #[arg(short, long, default_value = "http://127.0.0.1/solr/arclight")]
     solr_url: String,
@@ -91,6 +95,16 @@ async fn main() -> anyhow::Result<()> {
             // harvester.summarize().await?;
         }
         Commands::Index(cfg) => {
+            let status = Command::new("traject").args(["--version"]).status()?;
+
+            if !status.success() {
+                anyhow::bail!("traject failed with exit code: {:?}", status.code());
+            }
+
+            if !exists(cfg.configuration)? {
+                anyhow::bail!("traject configuration was not found");
+            }
+
             println!("Indexing records into {}", cfg.repository);
             let config = IndexerConfig::new(
                 cfg.repository,
@@ -99,12 +113,6 @@ async fn main() -> anyhow::Result<()> {
                 cfg.solr_url,
             );
             let indexer = Indexer::new(config, pool);
-
-            let status = Command::new("traject").args(["--version"]).status()?;
-
-            if !status.success() {
-                anyhow::bail!("traject failed with exit code: {:?}", status.code());
-            }
 
             indexer.run().await?;
             todo!()

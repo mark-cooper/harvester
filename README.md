@@ -13,6 +13,7 @@ cargo install --version="~0.8" sqlx-cli \
 ```
 
 This will create the database and regenerate sqlx query files if needed.
+The latter should be committed to version control.
 
 ## Running locally
 
@@ -26,14 +27,15 @@ Using cargo for indexing (ArcLight):
 
 ```bash
 cargo run -- index \
-    lyrasis-special-collections \ # Target ArcLight repository id
-    "https://test.archivesspace.org/oai" \ # Source OAI endpoint
-    "Lyrasis Special Collections" \ # Source OAI repository name
+    lyrasis-special-collections \
+    "https://test.archivesspace.org/oai" \
+    "Lyrasis Special Collections" \
+    --configuration=traject/ead2_config.rb
 ```
 
 ### Rules for metadata extraction
 
-This is an optional feature. Omit the `-r` arg to bypass.
+This is an optional feature (though required for indexing). Omit the `-r` arg to bypass.
 
 A rules file looks like:
 
