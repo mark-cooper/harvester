@@ -44,4 +44,8 @@ impl Indexer {
     pub fn new(config: IndexerConfig, pool: PgPool) -> Self {
         Self { config, pool }
     }
+
+    pub async fn run(&self) -> anyhow::Result<()> {
+        indexer::run(&self).await
+    }
 }

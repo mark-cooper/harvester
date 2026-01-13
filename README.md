@@ -12,14 +12,23 @@ cargo install --version="~0.8" sqlx-cli \
 ./scripts/init_db.sh
 ```
 
-This will create the database and table and regenerate sqlx query files if needed.
+This will create the database and regenerate sqlx query files if needed.
 
 ## Running locally
 
-Using cargo:
+Using cargo for harvesting:
 
 ```bash
 cargo run -- harvest -m oai_ead -r ~/rules.txt https://test.archivesspace.org/oai
+```
+
+Using cargo for indexing (ArcLight):
+
+```bash
+cargo run -- index \
+    lyrasis-special-collections \ # Target ArcLight repository id
+    "https://test.archivesspace.org/oai" \ # Source OAI endpoint
+    "Lyrasis Special Collections" \ # Source OAI repository name
 ```
 
 ### Rules for metadata extraction

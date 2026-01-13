@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, process::Command};
 
 use clap::{Args, Parser, Subcommand, command};
 use harvester::{Harvester, Indexer, IndexerConfig, OaiConfig, db};
@@ -42,17 +42,18 @@ struct HarvesterArgs {
 
 #[derive(Debug, Args)]
 struct IndexerArgs {
-    /// ArcLight repository id
-    arclight_repository: String,
+    /// Target repository id
+    repository: String,
 
-    /// ArcLight solr url
-    arclight_url: String,
+    /// Source OAI endpoint url
+    oai_endpoint: String,
 
-    /// OAI repository name
+    /// Source OAI repository name
     oai_repository: String,
 
-    /// OAI endpoint url
-    oai_url: String,
+    /// Solr url
+    #[arg(short, long, default_value = "http://127.0.0.1/solr/arclight")]
+    solr_url: String,
 
     /// Preview mode (show matching records, do not index)
     #[arg(short, long, default_value_t = false)]
@@ -90,15 +91,22 @@ async fn main() -> anyhow::Result<()> {
             // harvester.summarize().await?;
         }
         Commands::Index(cfg) => {
+            println!("Indexing records into {}", cfg.repository);
             let config = IndexerConfig::new(
-                cfg.arclight_repository,
-                cfg.arclight_url,
+                cfg.repository,
+                cfg.oai_endpoint,
                 cfg.oai_repository,
-                cfg.oai_url,
+                cfg.solr_url,
             );
-            let _ = Indexer::new(config, pool);
+            let indexer = Indexer::new(config, pool);
 
-            // bundle exec traject --version
+            let status = Command::new("traject").args(["--version"]).status()?;
+
+            if !status.success() {
+                anyhow::bail!("traject failed with exit code: {:?}", status.code());
+            }
+
+            indexer.run().await?;
             todo!()
         }
     }
