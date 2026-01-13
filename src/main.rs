@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf};
 
 use clap::{Args, Parser, Subcommand, command};
-use harvester::{Harvester, OaiConfig, db};
+use harvester::{Harvester, Indexer, IndexerConfig, OaiConfig, db};
 
 /// OAI-PMH harvester
 #[derive(Debug, Parser)]
@@ -21,6 +21,9 @@ struct Cli {
 enum Commands {
     #[command(arg_required_else_help = true)]
     Harvest(HarvesterArgs),
+
+    #[command(arg_required_else_help = true)]
+    Index(IndexerArgs),
 }
 
 #[derive(Debug, Args)]
@@ -35,6 +38,25 @@ struct HarvesterArgs {
     /// XML scanning rules file
     #[arg(short, long)]
     rules: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct IndexerArgs {
+    /// ArcLight repository id
+    arclight_repository: String,
+
+    /// ArcLight solr url
+    arclight_url: String,
+
+    /// OAI repository name
+    oai_repository: String,
+
+    /// OAI endpoint url
+    oai_url: String,
+
+    /// Preview mode (show matching records, do not index)
+    #[arg(short, long, default_value_t = false)]
+    preview: bool,
 }
 
 #[tokio::main]
@@ -66,6 +88,18 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // harvester.summarize().await?;
+        }
+        Commands::Index(cfg) => {
+            let config = IndexerConfig::new(
+                cfg.arclight_repository,
+                cfg.arclight_url,
+                cfg.oai_repository,
+                cfg.oai_url,
+            );
+            let _ = Indexer::new(config, pool);
+
+            // bundle exec traject --version
+            todo!()
         }
     }
 
