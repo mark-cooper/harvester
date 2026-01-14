@@ -35,3 +35,21 @@ impl Harvester {
         metadata::run(&self, rules).await
     }
 }
+
+/// Get head & tail of string for debugging shelled-out cmds
+fn truncate_middle(s: &str, head: usize, tail: usize) -> String {
+    let total = s.chars().count();
+    if total <= head + tail {
+        return s.to_string();
+    }
+
+    let head_end = s.char_indices().nth(head).unwrap().0;
+    let tail_start = s.char_indices().nth(total - tail).unwrap().0;
+
+    format!(
+        "{}\n... <{} chars omitted> ...\n{}",
+        &s[..head_end],
+        total - head - tail,
+        &s[tail_start..],
+    )
+}

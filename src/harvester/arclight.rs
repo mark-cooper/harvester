@@ -7,6 +7,7 @@ use tokio::process::Command;
 use crate::harvester::{
     indexer::{self, Indexer},
     oai::OaiRecordId,
+    truncate_middle,
 };
 
 pub struct ArcLightIndexer {
@@ -120,7 +121,7 @@ impl Indexer for ArcLightIndexer {
                 .await?;
                 Ok(())
             } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stderr = truncate_middle(&String::from_utf8_lossy(&output.stderr), 200, 200);
                 sqlx::query!(
                     r#"
                     UPDATE oai_records
