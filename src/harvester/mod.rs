@@ -1,3 +1,4 @@
+mod arclight;
 mod download;
 mod import;
 mod indexer;
@@ -7,7 +8,7 @@ mod rules;
 
 use std::path::PathBuf;
 
-pub use indexer::IndexerConfig;
+pub use arclight::{ArcLightIndexer, ArcLightIndexerConfig};
 pub use oai::OaiConfig;
 
 use sqlx::PgPool;
@@ -32,20 +33,5 @@ impl Harvester {
 
     pub async fn metadata(&self, rules: PathBuf) -> anyhow::Result<()> {
         metadata::run(&self, rules).await
-    }
-}
-
-pub struct Indexer {
-    config: IndexerConfig,
-    pool: PgPool,
-}
-
-impl Indexer {
-    pub fn new(config: IndexerConfig, pool: PgPool) -> Self {
-        Self { config, pool }
-    }
-
-    pub async fn run(&self) -> anyhow::Result<()> {
-        indexer::run(&self).await
     }
 }

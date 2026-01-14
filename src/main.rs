@@ -1,7 +1,7 @@
 use std::{env, fs::exists, path::PathBuf, process::Command};
 
 use clap::{Args, Parser, Subcommand, command};
-use harvester::{Harvester, Indexer, IndexerConfig, OaiConfig, db};
+use harvester::{ArcLightIndexer, ArcLightIndexerConfig, Harvester, OaiConfig, db};
 
 /// OAI-PMH harvester
 #[derive(Debug, Parser)]
@@ -22,8 +22,15 @@ enum Commands {
     #[command(arg_required_else_help = true)]
     Harvest(HarvesterArgs),
 
-    #[command(arg_required_else_help = true)]
-    Index(IndexerArgs),
+    /// Index records into a target system
+    #[command(subcommand)]
+    Index(IndexCommands),
+}
+
+#[derive(Debug, Subcommand)]
+enum IndexCommands {
+    #[command(name = "arclight", arg_required_else_help = true)]
+    ArcLight(ArcLightArgs),
 }
 
 #[derive(Debug, Args)]
@@ -41,7 +48,7 @@ struct HarvesterArgs {
 }
 
 #[derive(Debug, Args)]
-struct IndexerArgs {
+struct ArcLightArgs {
     /// Target repository id
     repository: String,
 
@@ -55,13 +62,13 @@ struct IndexerArgs {
     #[arg(short, long, default_value = "traject/ead2_config.rb")]
     configuration: PathBuf,
 
+    /// Preview mode (show matching records, do not index or delete)
+    #[arg(short, long, default_value_t = false)]
+    preview: bool,
+
     /// Solr url
     #[arg(short, long, default_value = "http://127.0.0.1/solr/arclight")]
     solr_url: String,
-
-    /// Preview mode (show matching records, do not index)
-    #[arg(short, long, default_value_t = false)]
-    preview: bool,
 }
 
 #[tokio::main]
@@ -94,28 +101,29 @@ async fn main() -> anyhow::Result<()> {
 
             // harvester.summarize().await?;
         }
-        Commands::Index(cfg) => {
+        Commands::Index(IndexCommands::ArcLight(cfg)) => {
             let status = Command::new("traject").args(["--version"]).status()?;
 
             if !status.success() {
                 anyhow::bail!("traject failed with exit code: {:?}", status.code());
             }
 
-            if !exists(cfg.configuration)? {
+            if !exists(&cfg.configuration)? {
                 anyhow::bail!("traject configuration was not found");
             }
 
             println!("Indexing records into {}", cfg.repository);
-            let config = IndexerConfig::new(
+            let config = ArcLightIndexerConfig::new(
+                cfg.configuration,
                 cfg.repository,
                 cfg.oai_endpoint,
                 cfg.oai_repository,
+                cfg.preview,
                 cfg.solr_url,
             );
-            let indexer = Indexer::new(config, pool);
+            let indexer = ArcLightIndexer::new(config, pool);
 
             indexer.run().await?;
-            todo!()
         }
     }
 

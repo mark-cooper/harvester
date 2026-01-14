@@ -26,7 +26,7 @@ cargo run -- harvest -m oai_ead -r fixtures/rules.txt https://test.archivesspace
 Using cargo for indexing (ArcLight):
 
 ```bash
-cargo run -- index \
+cargo run -- index arclight \
     allen-doe-research-center \
     "https://test.archivesspace.org/oai" \
     "Allen Doe Research Center" \

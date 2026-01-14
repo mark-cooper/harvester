@@ -1,3 +1,3 @@
 pub mod db;
 mod harvester;
-pub use harvester::{Harvester, Indexer, IndexerConfig, OaiConfig};
+pub use harvester::{ArcLightIndexer, ArcLightIndexerConfig, Harvester, OaiConfig};
