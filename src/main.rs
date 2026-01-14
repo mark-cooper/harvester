@@ -1,4 +1,4 @@
-use std::{env, fs::exists, path::PathBuf, process::Command};
+use std::{env, path::PathBuf, process::Command};
 
 use clap::{Args, Parser, Subcommand, command};
 use harvester::{ArcLightIndexer, ArcLightIndexerConfig, Harvester, OaiConfig, db};
@@ -62,12 +62,20 @@ struct ArcLightArgs {
     #[arg(short, long, default_value = "traject/ead2_config.rb")]
     configuration: PathBuf,
 
+    /// EAD base directory
+    #[arg(short, long, default_value = "data")]
+    dir: PathBuf,
+
     /// Preview mode (show matching records, do not index or delete)
     #[arg(short, long, default_value_t = false)]
     preview: bool,
 
+    /// Repositories yaml file
+    #[arg(short, long, default_value = "config/repositories.yml")]
+    repository_file: PathBuf,
+
     /// Solr url
-    #[arg(short, long, default_value = "http://127.0.0.1/solr/arclight")]
+    #[arg(short, long, default_value = "http://127.0.0.1:8983/solr/arclight")]
     solr_url: String,
 }
 
@@ -108,17 +116,27 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("traject failed with exit code: {:?}", status.code());
             }
 
-            if !exists(&cfg.configuration)? {
+            if !&cfg.configuration.is_file() {
                 anyhow::bail!("traject configuration was not found");
+            }
+
+            if !cfg.dir.is_dir() {
+                anyhow::bail!("base directory was not found");
+            }
+
+            if !cfg.repository_file.is_file() {
+                anyhow::bail!("repositories configuration was not found");
             }
 
             println!("Indexing records into {}", cfg.repository);
             let config = ArcLightIndexerConfig::new(
                 cfg.configuration,
+                cfg.dir,
                 cfg.repository,
                 cfg.oai_endpoint,
                 cfg.oai_repository,
                 cfg.preview,
+                cfg.repository_file,
                 cfg.solr_url,
             );
             let indexer = ArcLightIndexer::new(config, pool);

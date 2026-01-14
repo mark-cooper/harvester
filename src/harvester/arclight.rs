@@ -85,6 +85,8 @@ impl Indexer for ArcLightIndexer {
                 return Ok(());
             }
 
+            let path = self.config.dir.join(record.path());
+
             let output = Command::new("traject")
                 .arg("-i")
                 .arg("xml")
@@ -96,16 +98,41 @@ impl Indexer for ArcLightIndexer {
                 .arg(format!("id={}", &record.fingerprint))
                 .arg("-u")
                 .arg(&self.config.solr_url)
-                .arg(record.path())
+                .arg(path)
+                .env("REPOSITORY_FILE", &self.config.repository_file)
                 .output()
                 .await?;
 
+            // TODO: status updates need to be moved out
+            // see also: download:update_record_available etc.
+            // the in common part: endpoint, identifier, status + message for fail
             if output.status.success() {
-                // TODO: update db "indexed"
+                sqlx::query!(
+                    r#"
+                    UPDATE oai_records
+                    SET status = 'indexed', last_checked_at = NOW()
+                    WHERE endpoint = $1 AND metadata_prefix = 'oai_ead' AND identifier = $2
+                    "#,
+                    &self.config.oai_endpoint,
+                    record.identifier
+                )
+                .execute(&self.pool)
+                .await?;
                 Ok(())
             } else {
-                // TODO: update db "failed" with message
                 let stderr = String::from_utf8_lossy(&output.stderr);
+                sqlx::query!(
+                    r#"
+                    UPDATE oai_records
+                    SET status = 'failed', message = $3, last_checked_at = NOW()
+                    WHERE endpoint = $1 AND metadata_prefix = 'oai_ead' AND identifier = $2
+                    "#,
+                    &self.config.oai_endpoint,
+                    record.identifier,
+                    &stderr
+                )
+                .execute(&self.pool)
+                .await?;
                 anyhow::bail!("traject failed: {}", stderr)
             }
         })
@@ -123,10 +150,12 @@ impl Indexer for ArcLightIndexer {
 #[derive(Debug, Clone)]
 pub struct ArcLightIndexerConfig {
     configuration: PathBuf,
+    dir: PathBuf,
     repository: String,
     oai_endpoint: String,
     oai_repository: String,
     preview: bool,
+    repository_file: PathBuf,
     solr_url: String,
 }
 
@@ -135,18 +164,22 @@ impl ArcLightIndexerConfig {
     // (for example: parse endpoint/url as uri etc.)
     pub fn new(
         configuration: PathBuf,
+        dir: PathBuf,
         repository: String,
         oai_endpoint: String,
         oai_repository: String,
         preview: bool,
+        repository_file: PathBuf,
         solr_url: String,
     ) -> Self {
         Self {
             configuration,
+            dir,
             repository,
             oai_endpoint,
             oai_repository,
             preview,
+            repository_file,
             solr_url,
         }
     }

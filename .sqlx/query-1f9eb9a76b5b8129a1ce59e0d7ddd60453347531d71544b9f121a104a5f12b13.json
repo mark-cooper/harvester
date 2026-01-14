@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    UPDATE oai_records\n                    SET status = 'failed', message = $3, last_checked_at = NOW()\n                    WHERE endpoint = $1 AND metadata_prefix = 'oai_ead' AND identifier = $2\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1f9eb9a76b5b8129a1ce59e0d7ddd60453347531d71544b9f121a104a5f12b13"
+}

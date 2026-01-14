@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    UPDATE oai_records\n                    SET status = 'indexed', last_checked_at = NOW()\n                    WHERE endpoint = $1 AND metadata_prefix = 'oai_ead' AND identifier = $2\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d49107809fc82cb022a454498c8aa8896710c5c3c64b98ea4558fb0bef781e7"
+}

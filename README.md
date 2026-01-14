@@ -29,8 +29,7 @@ Using cargo for indexing (ArcLight):
 cargo run -- index arclight \
     allen-doe-research-center \
     "https://test.archivesspace.org/oai" \
-    "Allen Doe Research Center" \
-    --configuration=traject/ead2_config.rb
+    "Allen Doe Research Center"
 ```
 
 ### Rules for metadata extraction
