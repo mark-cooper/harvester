@@ -43,17 +43,18 @@ impl Indexer for ArcLightIndexer {
                         SELECT identifier, fingerprint AS "fingerprint!"
                         FROM oai_records
                         WHERE endpoint = $1
-                          AND metadata_prefix = 'oai_ead'
-                          AND metadata->'repository' ? $2
-                          AND identifier > $3
-                          AND status = $4
+                          AND metadata_prefix = $2
+                          AND status = $3
+                          AND identifier > $4
+                          AND metadata->'repository' ? $5
                         ORDER BY identifier
                         LIMIT 100
                         "#,
                         &self.config.oai_endpoint,
-                        &self.config.oai_repository,
+                        &self.config.metadata_prefix,
+                        status,
                         last_id,
-                        status
+                        &self.config.oai_repository,
                     )
                     .fetch_all(&self.pool)
                     .await?
@@ -65,15 +66,16 @@ impl Indexer for ArcLightIndexer {
                         SELECT identifier, fingerprint AS "fingerprint!"
                         FROM oai_records
                         WHERE endpoint = $1
-                          AND metadata_prefix = 'oai_ead'
-                          AND metadata->'repository' ? $2
+                          AND metadata_prefix = $2
                           AND status = $3
+                          AND metadata->'repository' ? $4
                         ORDER BY identifier
                         LIMIT 100
                         "#,
                         &self.config.oai_endpoint,
+                        &self.config.metadata_prefix,
+                        status,
                         &self.config.oai_repository,
-                        status
                     )
                     .fetch_all(&self.pool)
                     .await?
