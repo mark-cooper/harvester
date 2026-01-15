@@ -32,6 +32,9 @@ cargo run -- index arclight \
     "Allen Doe Research Center"
 ```
 
+This uses a range of default values so will only work if your setup is aligned.
+For all options run: `cargo run -- index arclight --help`.
+
 ### Rules for metadata extraction
 
 This is an optional feature (though required for indexing). Omit the `-r` arg to bypass.

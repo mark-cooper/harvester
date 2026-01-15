@@ -1,6 +1,6 @@
 use futures::{StreamExt, future::BoxFuture, stream};
 
-use crate::harvester::oai::OaiRecordId;
+use crate::harvester::oai::{OaiRecordId, OaiRecordStatus};
 
 const BATCH_SIZE: usize = 100;
 const CONCURRENCY: usize = 10;
@@ -16,8 +16,10 @@ pub trait Indexer: Sync {
 }
 
 pub async fn run<T: Indexer>(indexer: &T) -> anyhow::Result<()> {
-    let total_indexed = process_records(indexer, "available", T::index_record).await?;
-    let total_deleted = process_records(indexer, "deleted", T::delete_record).await?;
+    let total_indexed =
+        process_records(indexer, OaiRecordStatus::PARSED.as_str(), T::index_record).await?;
+    let total_deleted =
+        process_records(indexer, OaiRecordStatus::DELETED.as_str(), T::delete_record).await?;
 
     println!("Indexed records: {}", total_indexed);
     println!("Deleted records: {}", total_deleted);

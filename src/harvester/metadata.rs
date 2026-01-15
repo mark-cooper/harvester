@@ -1,6 +1,9 @@
 use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 
-use crate::harvester::{oai::OaiRecordId, rules::RuleSet};
+use crate::{
+    db::{FetchRecordsParams, UpdateStatusParams, do_update_status_query, fetch_records_by_status},
+    harvester::{oai::OaiRecordStatus, rules::RuleSet},
+};
 
 use super::Harvester;
 
@@ -12,7 +15,13 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
     let mut total_processed = 0usize;
 
     loop {
-        let batch = fetch_available_records(harvester, last_identifier.as_deref()).await?;
+        let params = FetchRecordsParams {
+            endpoint: &harvester.config.endpoint,
+            metadata_prefix: &harvester.config.metadata_prefix,
+            status: OaiRecordStatus::AVAILABLE.as_str(),
+            last_identifier: last_identifier.as_deref(),
+        };
+        let batch = fetch_records_by_status(&harvester.pool, params).await?;
         if batch.is_empty() {
             break;
         }
@@ -28,7 +37,14 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
                     total_processed += 1;
                 }
                 Err(e) => {
-                    update_record_failed(harvester, &record.identifier, &e.to_string()).await?;
+                    let params = UpdateStatusParams {
+                        endpoint: &harvester.config.endpoint,
+                        metadata_prefix: &harvester.config.metadata_prefix,
+                        identifier: &record.identifier,
+                        status: OaiRecordStatus::FAILED.as_str(),
+                        message: &e.to_string(),
+                    };
+                    do_update_status_query(&harvester.pool, params).await?;
                 }
             }
         }
@@ -40,52 +56,6 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
 
     println!("Extracted metadata for {} records", total_processed);
     Ok(())
-}
-
-async fn fetch_available_records(
-    harvester: &Harvester,
-    last_identifier: Option<&str>,
-) -> anyhow::Result<Vec<OaiRecordId>> {
-    Ok(match last_identifier {
-        Some(last_id) => {
-            sqlx::query_as!(
-                OaiRecordId,
-                r#"
-                SELECT identifier, fingerprint AS "fingerprint!"
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND identifier > $3
-                  AND status = 'available'
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-                &harvester.config.endpoint,
-                &harvester.config.metadata_prefix,
-                last_id
-            )
-            .fetch_all(&harvester.pool)
-            .await?
-        }
-        None => {
-            sqlx::query_as!(
-                OaiRecordId,
-                r#"
-                SELECT identifier, fingerprint AS "fingerprint!"
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = 'available'
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-                &harvester.config.endpoint,
-                &harvester.config.metadata_prefix,
-            )
-            .fetch_all(&harvester.pool)
-            .await?
-        }
-    })
 }
 
 fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_json::Value> {
@@ -181,34 +151,14 @@ async fn update_record_metadata(
     sqlx::query!(
         r#"
         UPDATE oai_records
-        SET metadata = $4, last_checked_at = NOW()
+        SET status = $4, metadata = $5, last_checked_at = NOW()
         WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
         "#,
         &harvester.config.endpoint,
         &harvester.config.metadata_prefix,
         identifier,
+        OaiRecordStatus::PARSED.as_str(),
         metadata
-    )
-    .execute(&harvester.pool)
-    .await?;
-    Ok(())
-}
-
-async fn update_record_failed(
-    harvester: &Harvester,
-    identifier: &str,
-    message: &str,
-) -> anyhow::Result<()> {
-    sqlx::query!(
-        r#"
-        UPDATE oai_records
-        SET status = 'failed', message = $4, last_checked_at = NOW()
-        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
-        "#,
-        &harvester.config.endpoint,
-        &harvester.config.metadata_prefix,
-        identifier,
-        message
     )
     .execute(&harvester.pool)
     .await?;

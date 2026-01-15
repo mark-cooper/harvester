@@ -1,4 +1,4 @@
-use crate::harvester::oai::OaiRecordImport;
+use crate::harvester::oai::{OaiRecordImport, OaiRecordStatus};
 
 use super::Harvester;
 
@@ -75,7 +75,7 @@ async fn batch_upsert_records(
             message = '',
             version = oai_records.version + 1,
             last_checked_at = EXCLUDED.last_checked_at
-        WHERE oai_records.status != 'failed'
+        WHERE oai_records.status != $7
         AND oai_records.datestamp != EXCLUDED.datestamp
         "#,
     )
@@ -85,6 +85,7 @@ async fn batch_upsert_records(
     .bind(&datestamps)
     .bind(&statuses)
     .bind(batch_len)
+    .bind(OaiRecordStatus::FAILED.as_str())
     .execute(&harvester.pool)
     .await?;
 

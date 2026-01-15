@@ -3,13 +3,13 @@ mod download;
 mod import;
 mod indexer;
 mod metadata;
-mod oai;
+pub mod oai;
 mod rules;
 
 use std::path::PathBuf;
 
 pub use arclight::{ArcLightIndexer, ArcLightIndexerConfig};
-pub use oai::OaiConfig;
+pub use oai::{OaiConfig, OaiRecordId};
 
 use sqlx::PgPool;
 

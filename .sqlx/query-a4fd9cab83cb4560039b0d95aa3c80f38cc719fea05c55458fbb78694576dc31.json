@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT identifier, fingerprint AS \"fingerprint!\"\n                FROM oai_records\n                WHERE endpoint = $1\n                  AND metadata_prefix = $2\n                  AND status = $3\n                ORDER BY identifier\n                LIMIT 100\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "identifier",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "fingerprint!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "a4fd9cab83cb4560039b0d95aa3c80f38cc719fea05c55458fbb78694576dc31"
+}

@@ -4,10 +4,13 @@ use futures::future::BoxFuture;
 use sqlx::PgPool;
 use tokio::process::Command;
 
-use crate::harvester::{
-    indexer::{self, Indexer},
-    oai::OaiRecordId,
-    truncate_middle,
+use crate::{
+    db::{UpdateStatusParams, do_update_status_query},
+    harvester::{
+        indexer::{self, Indexer},
+        oai::{OaiRecordId, OaiRecordStatus},
+        truncate_middle,
+    },
 };
 
 pub struct ArcLightIndexer {
@@ -104,37 +107,23 @@ impl Indexer for ArcLightIndexer {
                 .output()
                 .await?;
 
-            // TODO: status updates need to be moved out
-            // see also: download:update_record_available etc.
-            // the in common part: endpoint, identifier, status + message for fail
+            let mut params = UpdateStatusParams {
+                endpoint: &self.config.oai_endpoint,
+                metadata_prefix: &self.config.metadata_prefix,
+                identifier: &record.identifier,
+                status: OaiRecordStatus::INDEXED.as_str(),
+                message: "",
+            };
+
             if output.status.success() {
-                sqlx::query!(
-                    r#"
-                    UPDATE oai_records
-                    SET status = 'indexed', last_checked_at = NOW()
-                    WHERE endpoint = $1 AND metadata_prefix = 'oai_ead' AND identifier = $2
-                    "#,
-                    &self.config.oai_endpoint,
-                    record.identifier
-                )
-                .execute(&self.pool)
-                .await?;
+                do_update_status_query(&self.pool, params).await?;
                 Ok(())
             } else {
                 let stderr = truncate_middle(&String::from_utf8_lossy(&output.stderr), 200, 200);
-                sqlx::query!(
-                    r#"
-                    UPDATE oai_records
-                    SET status = 'failed', message = $3, last_checked_at = NOW()
-                    WHERE endpoint = $1 AND metadata_prefix = 'oai_ead' AND identifier = $2
-                    "#,
-                    &self.config.oai_endpoint,
-                    record.identifier,
-                    &stderr
-                )
-                .execute(&self.pool)
-                .await?;
-                anyhow::bail!("traject failed: {}", stderr)
+                params.status = OaiRecordStatus::FAILED.as_str();
+                params.message = &stderr;
+                do_update_status_query(&self.pool, params).await?;
+                anyhow::bail!("traject failed: {}", stderr);
             }
         })
     }
@@ -142,6 +131,7 @@ impl Indexer for ArcLightIndexer {
     fn delete_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             // TODO: implement Solr delete
+            // status "purged"
             let _ = record;
             Ok(())
         })
@@ -158,6 +148,7 @@ pub struct ArcLightIndexerConfig {
     preview: bool,
     repository_file: PathBuf,
     solr_url: String,
+    metadata_prefix: String,
 }
 
 impl ArcLightIndexerConfig {
@@ -182,6 +173,7 @@ impl ArcLightIndexerConfig {
             preview,
             repository_file,
             solr_url,
+            metadata_prefix: "oai_ead".to_string(),
         }
     }
 }

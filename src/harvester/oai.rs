@@ -47,7 +47,37 @@ impl From<Header> for OaiRecordImport {
         Self::new(
             value.identifier,
             value.datestamp,
-            value.status.unwrap_or_else(|| "pending".to_string()),
+            value
+                .status
+                .unwrap_or_else(|| OaiRecordStatus::PENDING.to_string()),
         )
+    }
+}
+
+pub enum OaiRecordStatus {
+    AVAILABLE,
+    DELETED,
+    FAILED,
+    INDEXED,
+    PARSED,
+    PENDING,
+}
+
+impl OaiRecordStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OaiRecordStatus::AVAILABLE => "available",
+            OaiRecordStatus::DELETED => "deleted",
+            OaiRecordStatus::FAILED => "failed",
+            OaiRecordStatus::INDEXED => "indexed",
+            OaiRecordStatus::PARSED => "parsed",
+            OaiRecordStatus::PENDING => "pending",
+        }
+    }
+}
+
+impl std::fmt::Display for OaiRecordStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
