@@ -21,3 +21,8 @@ rand = "0.9.2"
 [package.metadata.sqlx]
 migrations = "migrations"
 offline = true
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
