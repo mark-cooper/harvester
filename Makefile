@@ -1,4 +1,4 @@
-.PHONY: build build-linux build-macos clean help release
+.PHONY: build build-linux build-macos ci clean help release
 
 # Binary name
 BINARY_NAME := harvester
@@ -35,16 +35,11 @@ build-macos: ## Build for macOS ARM64 (requires macOS or cross-compilation setup
 
 build-all: build-linux build-macos ## Build for all supported platforms
 
-release: clean build-all ## Create release builds for distribution
-	@echo "Release builds created in $(DIST_DIR)/"
-	@ls -lh $(DIST_DIR)/
+ci: test check fmt lint ## Run all checks
 
 clean: ## Clean build artifacts
 	cargo clean
 	rm -rf $(DIST_DIR)
-
-test: ## Run tests
-	cargo test
 
 check: ## Run cargo check
 	cargo check
@@ -57,3 +52,10 @@ lint: ## Run clippy
 
 install: build ## Install binary to ~/.cargo/bin
 	cargo install --path .
+
+release: clean build-all ## Create release builds for distribution
+	@echo "Release builds created in $(DIST_DIR)/"
+	@ls -lh $(DIST_DIR)/
+
+test: ## Run tests
+	cargo test
