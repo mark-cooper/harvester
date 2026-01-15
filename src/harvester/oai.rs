@@ -49,29 +49,29 @@ impl From<Header> for OaiRecordImport {
             value.datestamp,
             value
                 .status
-                .unwrap_or_else(|| OaiRecordStatus::PENDING.to_string()),
+                .unwrap_or_else(|| OaiRecordStatus::Pending.to_string()),
         )
     }
 }
 
 pub enum OaiRecordStatus {
-    AVAILABLE,
-    DELETED,
-    FAILED,
-    INDEXED,
-    PARSED,
-    PENDING,
+    Available,
+    Deleted,
+    Failed,
+    Indexed,
+    Parsed,
+    Pending,
 }
 
 impl OaiRecordStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
-            OaiRecordStatus::AVAILABLE => "available",
-            OaiRecordStatus::DELETED => "deleted",
-            OaiRecordStatus::FAILED => "failed",
-            OaiRecordStatus::INDEXED => "indexed",
-            OaiRecordStatus::PARSED => "parsed",
-            OaiRecordStatus::PENDING => "pending",
+            OaiRecordStatus::Available => "available",
+            OaiRecordStatus::Deleted => "deleted",
+            OaiRecordStatus::Failed => "failed",
+            OaiRecordStatus::Indexed => "indexed",
+            OaiRecordStatus::Parsed => "parsed",
+            OaiRecordStatus::Pending => "pending",
         }
     }
 }

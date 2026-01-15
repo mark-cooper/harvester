@@ -113,7 +113,7 @@ impl Indexer for ArcLightIndexer {
                 endpoint: &self.config.oai_endpoint,
                 metadata_prefix: &self.config.metadata_prefix,
                 identifier: &record.identifier,
-                status: OaiRecordStatus::INDEXED.as_str(),
+                status: OaiRecordStatus::Indexed.as_str(),
                 message: "",
             };
 
@@ -122,7 +122,7 @@ impl Indexer for ArcLightIndexer {
                 Ok(())
             } else {
                 let stderr = truncate_middle(&String::from_utf8_lossy(&output.stderr), 200, 200);
-                params.status = OaiRecordStatus::FAILED.as_str();
+                params.status = OaiRecordStatus::Failed.as_str();
                 params.message = &stderr;
                 do_update_status_query(&self.pool, params).await?;
                 anyhow::bail!("traject failed: {}", stderr);
@@ -156,6 +156,7 @@ pub struct ArcLightIndexerConfig {
 impl ArcLightIndexerConfig {
     // TODO: constructor supports validation later if necessary
     // (for example: parse endpoint/url as uri etc.)
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         configuration: PathBuf,
         dir: PathBuf,

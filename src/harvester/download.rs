@@ -23,7 +23,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
         let params = FetchRecordsParams {
             endpoint: &harvester.config.endpoint,
             metadata_prefix: &harvester.config.metadata_prefix,
-            status: OaiRecordStatus::PENDING.as_str(),
+            status: OaiRecordStatus::Pending.as_str(),
             last_identifier: last_identifier.as_deref(),
         };
         let batch = fetch_records_by_status(&harvester.pool, params).await?;
@@ -69,7 +69,7 @@ async fn download_record(
         endpoint: &harvester.config.endpoint,
         metadata_prefix: &harvester.config.metadata_prefix,
         identifier: &record.identifier,
-        status: OaiRecordStatus::AVAILABLE.as_str(),
+        status: OaiRecordStatus::Available.as_str(),
         message: "",
     };
 
@@ -77,14 +77,14 @@ async fn download_record(
         Ok(response) => {
             if let Some(payload) = response.payload {
                 let metadata = &payload.record.metadata;
-                let path = PathBuf::from(harvester.config.data_dir.clone()).join(record.path());
+                let path = harvester.config.data_dir.join(record.path());
                 write_metadata_to_file(path, metadata).await?;
                 do_update_status_query(&harvester.pool, params).await?;
             }
         }
         Err(e) => {
             let message = e.to_string();
-            params.status = OaiRecordStatus::FAILED.as_str();
+            params.status = OaiRecordStatus::Failed.as_str();
             params.message = &message;
             do_update_status_query(&harvester.pool, params).await?;
         }

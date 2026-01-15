@@ -17,9 +17,9 @@ pub trait Indexer: Sync {
 
 pub async fn run<T: Indexer>(indexer: &T) -> anyhow::Result<()> {
     let total_indexed =
-        process_records(indexer, OaiRecordStatus::PARSED.as_str(), T::index_record).await?;
+        process_records(indexer, OaiRecordStatus::Parsed.as_str(), T::index_record).await?;
     let total_deleted =
-        process_records(indexer, OaiRecordStatus::DELETED.as_str(), T::delete_record).await?;
+        process_records(indexer, OaiRecordStatus::Deleted.as_str(), T::delete_record).await?;
 
     println!("Indexed records: {}", total_indexed);
     println!("Deleted records: {}", total_deleted);

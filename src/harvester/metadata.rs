@@ -18,7 +18,7 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
         let params = FetchRecordsParams {
             endpoint: &harvester.config.endpoint,
             metadata_prefix: &harvester.config.metadata_prefix,
-            status: OaiRecordStatus::AVAILABLE.as_str(),
+            status: OaiRecordStatus::Available.as_str(),
             last_identifier: last_identifier.as_deref(),
         };
         let batch = fetch_records_by_status(&harvester.pool, params).await?;
@@ -41,7 +41,7 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
                         endpoint: &harvester.config.endpoint,
                         metadata_prefix: &harvester.config.metadata_prefix,
                         identifier: &record.identifier,
-                        status: OaiRecordStatus::FAILED.as_str(),
+                        status: OaiRecordStatus::Failed.as_str(),
                         message: &e.to_string(),
                     };
                     do_update_status_query(&harvester.pool, params).await?;
@@ -92,15 +92,15 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_
             }
             Ok(Event::End(_)) => {
                 let text = current_text.trim();
-                if !text.is_empty() {
-                    if let Some(terminal) = stack.last() {
-                        for rule in rules.by_terminal(terminal) {
-                            if stack_matches_path(&stack, &rule.path) {
-                                result
-                                    .entry(rule.key.clone())
-                                    .or_default()
-                                    .push(text.to_string());
-                            }
+                if !text.is_empty()
+                    && let Some(terminal) = stack.last()
+                {
+                    for rule in rules.by_terminal(terminal) {
+                        if stack_matches_path(&stack, &rule.path) {
+                            result
+                                .entry(rule.key.clone())
+                                .or_default()
+                                .push(text.to_string());
                         }
                     }
                 }
@@ -116,7 +116,7 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_
 
     // Check for required fields
     for rule in rules.required() {
-        if result.get(&rule.key).map_or(true, |v| v.is_empty()) {
+        if result.get(&rule.key).is_none_or(|v| v.is_empty()) {
             return Err(anyhow::anyhow!("Required field '{}' is empty", rule.key));
         }
     }
@@ -157,7 +157,7 @@ async fn update_record_metadata(
         &harvester.config.endpoint,
         &harvester.config.metadata_prefix,
         identifier,
-        OaiRecordStatus::PARSED.as_str(),
+        OaiRecordStatus::Parsed.as_str(),
         metadata
     )
     .execute(&harvester.pool)

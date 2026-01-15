@@ -24,15 +24,15 @@ impl Harvester {
     }
 
     pub async fn download(&self) -> anyhow::Result<()> {
-        download::run(&self).await
+        download::run(self).await
     }
 
     pub async fn import(&self) -> anyhow::Result<()> {
-        import::run(&self).await
+        import::run(self).await
     }
 
     pub async fn metadata(&self, rules: PathBuf) -> anyhow::Result<()> {
-        metadata::run(&self, rules).await
+        metadata::run(self, rules).await
     }
 }
 

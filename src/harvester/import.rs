@@ -85,7 +85,7 @@ async fn batch_upsert_records(
     .bind(&datestamps)
     .bind(&statuses)
     .bind(batch_len)
-    .bind(OaiRecordStatus::FAILED.as_str())
+    .bind(OaiRecordStatus::Failed.as_str())
     .execute(&harvester.pool)
     .await?;
 
