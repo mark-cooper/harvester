@@ -9,11 +9,14 @@ cargo install --version="~0.8" sqlx-cli \
     --no-default-features \
     --features rustls,postgres
 
+# adjust envvar values as appropriate
+PGHOST=localhost PGUSER=admin PGPASSWORD=admin psql \
+    -c "CREATE ROLE harvester WITH CREATEDB LOGIN PASSWORD 'harvester';"
+
 ./scripts/init_db.sh
 ```
 
-This will create the database and regenerate sqlx query files if needed.
-The latter should be committed to version control.
+This will create the database.
 
 ## Running locally
 

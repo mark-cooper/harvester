@@ -1,4 +1,4 @@
-.PHONY: build build-linux build-macos ci clean help release
+.PHONY: build build-linux build-macos ci clean db help release
 
 # Binary name
 BINARY_NAME := harvester
@@ -43,6 +43,9 @@ clean: ## Clean build artifacts
 
 check: ## Run cargo check
 	cargo check
+
+db: ## Create the sqlx database query files
+	cargo sqlx prepare
 
 fmt: ## Format code
 	cargo fmt
