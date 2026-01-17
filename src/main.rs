@@ -1,4 +1,7 @@
-use std::{env, path::PathBuf, process::Command};
+use std::{
+    path::{self, PathBuf},
+    process::Command,
+};
 
 use clap::{Args, Parser, Subcommand, command};
 use harvester::{ArcLightIndexer, ArcLightIndexerConfig, Harvester, OaiConfig, db};
@@ -37,6 +40,10 @@ enum IndexCommands {
 struct HarvesterArgs {
     /// OAI endpoint url
     endpoint: String,
+
+    /// Base directory for downloads
+    #[arg(short, long, default_value = "data")]
+    dir: PathBuf,
 
     /// OAI metadata prefix
     #[arg(short, long)]
@@ -86,14 +93,16 @@ async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::from_filename(".env.local");
 
     let args = Cli::parse();
-    let cwd = env::current_dir()?; // TODO: support path arg?
     let pool = db::create_pool(&args.database_url).await?;
 
     match args.command {
         Commands::Harvest(cfg) => {
             println!("Harvesting records from {}", cfg.endpoint);
+
+            let data_dir = path::absolute(cfg.dir)?;
+
             let config = OaiConfig {
-                data_dir: cwd.join("data"),
+                data_dir,
                 endpoint: cfg.endpoint,
                 metadata_prefix: cfg.metadata_prefix,
             };
@@ -103,7 +112,10 @@ async fn main() -> anyhow::Result<()> {
             harvester.download().await?;
 
             if let Some(rules) = cfg.rules {
-                rules.try_exists().expect("rules file not found");
+                let rules = path::absolute(rules)?;
+                if !rules.is_file() {
+                    anyhow::bail!("rules file was not found");
+                }
                 harvester.metadata(rules).await?;
             }
 
@@ -116,27 +128,31 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("traject failed with exit code: {:?}", status.code());
             }
 
-            if !&cfg.configuration.is_file() {
+            let configuration = path::absolute(cfg.configuration)?;
+            let data_dir = path::absolute(cfg.dir)?;
+            let repository_file = path::absolute(cfg.repository_file)?;
+
+            if !configuration.is_file() {
                 anyhow::bail!("traject configuration was not found");
             }
 
-            if !cfg.dir.is_dir() {
+            if !data_dir.is_dir() {
                 anyhow::bail!("base directory was not found");
             }
 
-            if !cfg.repository_file.is_file() {
+            if !repository_file.is_file() {
                 anyhow::bail!("repositories configuration was not found");
             }
 
             println!("Indexing records into {}", cfg.repository);
             let config = ArcLightIndexerConfig::new(
-                cfg.configuration,
-                cfg.dir,
+                configuration,
+                data_dir,
                 cfg.repository,
                 cfg.oai_endpoint,
                 cfg.oai_repository,
                 cfg.preview,
-                cfg.repository_file,
+                repository_file,
                 cfg.solr_url,
             );
             let indexer = ArcLightIndexer::new(config, pool);
