@@ -3,7 +3,7 @@ use std::{
     process::Command,
 };
 
-use clap::{Args, Parser, Subcommand, command};
+use clap::{Args, Parser, Subcommand};
 use harvester::{ArcLightIndexer, ArcLightIndexerConfig, Harvester, OaiConfig, db};
 
 /// OAI-PMH harvester
