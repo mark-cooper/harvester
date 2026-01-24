@@ -5,12 +5,10 @@ use sqlx::PgPool;
 use tokio::process::Command;
 
 use crate::{
+    OaiRecordId,
     db::{UpdateStatusParams, do_update_status_query},
-    harvester::{
-        indexer::{self, Indexer},
-        oai::{OaiRecordId, OaiRecordStatus},
-        truncate_middle,
-    },
+    harvester::oai::OaiRecordStatus,
+    indexer::{self, Indexer, truncate_middle},
 };
 
 pub struct ArcLightIndexer {
