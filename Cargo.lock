@@ -645,7 +645,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "oai-pmh",
- "quick-xml",
+ "quick-xml 0.39.0",
  "rand 0.9.2",
  "reqwest",
  "serde_json",
@@ -1183,7 +1183,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14269f6e93e5d65c453b80c766931d1e79dcace9853074e03a7c3c9f3528ee71"
 dependencies = [
  "once_cell",
- "quick-xml",
+ "quick-xml 0.38.4",
  "regex",
  "reqwest",
  "serde",
@@ -1365,6 +1365,15 @@ checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
 dependencies = [
  "memchr",
  "serde",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.39.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2e3bf4aa9d243beeb01a7b3bc30b77cfe2c44e24ec02d751a7104a53c2c49a1"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
