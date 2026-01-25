@@ -51,7 +51,7 @@ fmt: ## Format code
 	cargo fmt
 
 lint: ## Run clippy
-	cargo clippy -- -D warnings
+	cargo clippy --all-targets -- -D warnings
 
 install: build ## Install binary to ~/.cargo/bin
 	cargo install --path .
