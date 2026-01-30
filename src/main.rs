@@ -1,10 +1,12 @@
 use std::{
-    path::{self, PathBuf},
+    path::{self},
     process::Command,
 };
 
-use clap::{Args, Parser, Subcommand};
-use harvester::{ArcLightIndexer, ArcLightIndexerConfig, Harvester, OaiConfig, db};
+use clap::{Parser, Subcommand};
+use harvester::{
+    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, Harvester, HarvesterArgs, OaiConfig, db,
+};
 
 /// OAI-PMH harvester
 #[derive(Debug, Parser)]
@@ -36,56 +38,6 @@ enum IndexCommands {
     ArcLight(ArcLightArgs),
 }
 
-#[derive(Debug, Args)]
-struct HarvesterArgs {
-    /// OAI endpoint url
-    endpoint: String,
-
-    /// Base directory for downloads
-    #[arg(short, long, default_value = "data")]
-    dir: PathBuf,
-
-    /// OAI metadata prefix
-    #[arg(short, long)]
-    metadata_prefix: String,
-
-    /// XML scanning rules file
-    #[arg(short, long)]
-    rules: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-struct ArcLightArgs {
-    /// Target repository id
-    repository: String,
-
-    /// Source OAI endpoint url
-    oai_endpoint: String,
-
-    /// Source OAI repository name
-    oai_repository: String,
-
-    /// Traject configuration file path
-    #[arg(short, long, default_value = "traject/ead2_config.rb")]
-    configuration: PathBuf,
-
-    /// EAD base directory
-    #[arg(short, long, default_value = "data")]
-    dir: PathBuf,
-
-    /// Preview mode (show matching records, do not index or delete)
-    #[arg(short, long, default_value_t = false)]
-    preview: bool,
-
-    /// Repositories yaml file
-    #[arg(short, long, default_value = "config/repositories.yml")]
-    repository_file: PathBuf,
-
-    /// Solr url
-    #[arg(short, long, default_value = "http://127.0.0.1:8983/solr/arclight")]
-    solr_url: String,
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env first, then .env.local can override
@@ -107,19 +59,7 @@ async fn main() -> anyhow::Result<()> {
                 metadata_prefix: cfg.metadata_prefix,
             };
             let harvester = Harvester::new(config, pool);
-
-            harvester.import().await?;
-            harvester.download().await?;
-
-            if let Some(rules) = cfg.rules {
-                let rules = path::absolute(rules)?;
-                if !rules.is_file() {
-                    anyhow::bail!("rules file was not found");
-                }
-                harvester.metadata(rules).await?;
-            }
-
-            // harvester.summarize().await?;
+            harvester.run(cfg.rules).await?;
         }
         Commands::Index(IndexCommands::ArcLight(cfg)) => {
             let status = Command::new("traject").args(["--version"]).status()?;

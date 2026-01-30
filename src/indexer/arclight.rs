@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use clap::Args;
 use futures::future::BoxFuture;
 use sqlx::PgPool;
 use tokio::process::Command;
@@ -10,6 +11,38 @@ use crate::{
     harvester::oai::OaiRecordStatus,
     indexer::{self, Indexer, truncate_middle},
 };
+
+#[derive(Debug, Args)]
+pub struct ArcLightArgs {
+    /// Target repository id
+    pub repository: String,
+
+    /// Source OAI endpoint url
+    pub oai_endpoint: String,
+
+    /// Source OAI repository name
+    pub oai_repository: String,
+
+    /// Traject configuration file path
+    #[arg(short, long, default_value = "traject/ead2_config.rb")]
+    pub configuration: PathBuf,
+
+    /// EAD base directory
+    #[arg(short, long, default_value = "data")]
+    pub dir: PathBuf,
+
+    /// Preview mode (show matching records, do not index or delete)
+    #[arg(short, long, default_value_t = false)]
+    pub preview: bool,
+
+    /// Repositories yaml file
+    #[arg(short, long, default_value = "config/repositories.yml")]
+    pub repository_file: PathBuf,
+
+    /// Solr url
+    #[arg(short, long, default_value = "http://127.0.0.1:8983/solr/arclight")]
+    pub solr_url: String,
+}
 
 pub struct ArcLightIndexer {
     config: ArcLightIndexerConfig,
