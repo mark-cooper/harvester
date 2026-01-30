@@ -60,6 +60,7 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
 
 fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_json::Value> {
     use quick_xml::Reader;
+    use quick_xml::escape::resolve_predefined_entity;
     use quick_xml::events::Event;
     use std::io::BufReader;
 
@@ -67,7 +68,8 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_
     let mut reader = Reader::from_reader(buf_reader);
     let mut result: HashMap<String, Vec<String>> = HashMap::new();
     let mut stack: Vec<String> = Vec::new();
-    let mut current_text = String::new();
+    // Track accumulated text at each depth level to handle nested markup
+    let mut text_at_depth: HashMap<usize, String> = HashMap::new();
     let mut buf = Vec::new();
 
     // Skip these elements entirely (dsc contains container lists, often 90%+ of file)
@@ -81,31 +83,46 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_
                     reader.read_to_end_into(e.name(), &mut Vec::new())?;
                 } else {
                     stack.push(name);
-                    current_text.clear();
+                    text_at_depth.entry(stack.len()).or_default();
                 }
             }
             Ok(Event::Text(e)) => {
                 let decoded = e
                     .decode()
                     .map_err(|err| anyhow::anyhow!("XML decode error: {}", err))?;
-                current_text.push_str(&decoded);
+                // Append text to current depth and all parent depths
+                for depth in 1..=stack.len() {
+                    text_at_depth.entry(depth).or_default().push_str(&decoded);
+                }
+            }
+            Ok(Event::GeneralRef(e)) => {
+                // Resolve entity references like &amp; -> &, &lt; -> <, etc.
+                let entity = e
+                    .decode()
+                    .map_err(|err| anyhow::anyhow!("XML decode error: {}", err))?;
+                let resolved = resolve_predefined_entity(&entity).unwrap_or(" ");
+                for depth in 1..=stack.len() {
+                    text_at_depth.entry(depth).or_default().push_str(resolved);
+                }
             }
             Ok(Event::End(_)) => {
-                let text = current_text.trim();
-                if !text.is_empty()
-                    && let Some(terminal) = stack.last()
-                {
-                    for rule in rules.by_terminal(terminal) {
-                        if stack_matches_path(&stack, &rule.path) {
-                            result
-                                .entry(rule.key.clone())
-                                .or_default()
-                                .push(text.to_string());
+                let depth = stack.len();
+                if let Some(text) = text_at_depth.remove(&depth) {
+                    let text = text.trim();
+                    if !text.is_empty()
+                        && let Some(terminal) = stack.last()
+                    {
+                        for rule in rules.by_terminal(terminal) {
+                            if stack_matches_path(&stack, &rule.path) {
+                                result
+                                    .entry(rule.key.clone())
+                                    .or_default()
+                                    .push(text.to_string());
+                            }
                         }
                     }
                 }
                 stack.pop();
-                current_text.clear();
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(anyhow::anyhow!("XML parse error: {}", e)),
@@ -221,5 +238,58 @@ nonexistent,nonexistent/field,required
         let err = result.unwrap_err().to_string();
         assert!(err.contains("nonexistent"));
         assert!(err.contains("empty"));
+    }
+
+    #[test]
+    fn test_extract_metadata_with_nested_markup() {
+        let xml = r#"<?xml version="1.0"?>
+<ead xmlns="urn:isbn:1-931666-22-9">
+  <archdesc>
+    <did>
+      <repository><corpname>Test Repo</corpname></repository>
+      <unittitle><i>Italicized Title</i></unittitle>
+      <unitid>ID-123</unitid>
+    </did>
+  </archdesc>
+</ead>"#;
+
+        let rules_csv = "\
+title,unittitle,required
+unit_id,unitid,required
+repository,repository/corpname,required
+";
+
+        let rules = RuleSet::load(rules_csv.as_bytes()).unwrap();
+        let metadata = extract_metadata(xml.as_bytes(), &rules).unwrap();
+
+        assert_eq!(metadata["title"], serde_json::json!(["Italicized Title"]));
+    }
+
+    #[test]
+    fn test_extract_metadata_with_ampersand() {
+        let xml = r#"<?xml version="1.0"?>
+<ead xmlns="urn:isbn:1-931666-22-9">
+  <archdesc>
+    <did>
+      <repository><corpname>Allen Doe Research &amp; Center</corpname></repository>
+      <unittitle>Test Title</unittitle>
+      <unitid>ID-123</unitid>
+    </did>
+  </archdesc>
+</ead>"#;
+
+        let rules_csv = "\
+title,unittitle,required
+unit_id,unitid,required
+repository,repository/corpname,required
+";
+
+        let rules = RuleSet::load(rules_csv.as_bytes()).unwrap();
+        let metadata = extract_metadata(xml.as_bytes(), &rules).unwrap();
+
+        assert_eq!(
+            metadata["repository"],
+            serde_json::json!(["Allen Doe Research & Center"])
+        );
     }
 }
