@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 dotenvy = "0.15"
 chrono = "0.4.43"
-clap = { version = "4.5.54", features = ["derive", "env"] }
+clap = { version = "4.5.56", features = ["derive", "env"] }
 csv = "1.4.0"
 futures = "0.3.31"
 oai-pmh = "0.3.0"
