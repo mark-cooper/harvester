@@ -41,8 +41,8 @@ enum IndexCommands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env first, then .env.local can override
-    let _ = dotenvy::from_filename(".env");
-    let _ = dotenvy::from_filename(".env.local");
+    let _ = dotenvy::from_filename_override(".env");
+    let _ = dotenvy::from_filename_override(".env.local");
 
     let args = Cli::parse();
     let pool = db::create_pool(&args.database_url).await?;
