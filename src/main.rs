@@ -6,6 +6,7 @@ use std::{
 use clap::{Parser, Subcommand};
 use harvester::{
     ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, Harvester, HarvesterArgs, OaiConfig, db,
+    expand_path,
 };
 
 /// OAI-PMH harvester
@@ -51,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Harvest(cfg) => {
             println!("Harvesting records from {}", cfg.endpoint);
 
-            let data_dir = path::absolute(cfg.dir)?;
+            let data_dir = path::absolute(expand_path(&cfg.dir))?;
 
             let config = OaiConfig {
                 data_dir,
@@ -59,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
                 metadata_prefix: cfg.metadata_prefix,
             };
             let harvester = Harvester::new(config, pool);
-            harvester.run(cfg.rules).await?;
+            harvester.run(cfg.rules.map(|p| expand_path(&p))).await?;
         }
         Commands::Index(IndexCommands::ArcLight(cfg)) => {
             let status = Command::new("traject").args(["--version"]).status()?;
@@ -68,9 +69,9 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("traject failed with exit code: {:?}", status.code());
             }
 
-            let configuration = path::absolute(cfg.configuration)?;
-            let data_dir = path::absolute(cfg.dir)?;
-            let repository_file = path::absolute(cfg.repository_file)?;
+            let configuration = path::absolute(expand_path(&cfg.configuration))?;
+            let data_dir = path::absolute(expand_path(&cfg.dir))?;
+            let repository_file = path::absolute(expand_path(&cfg.repository_file))?;
 
             if !configuration.is_file() {
                 anyhow::bail!("traject configuration was not found");
