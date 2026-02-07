@@ -16,8 +16,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     let mut batch = Vec::with_capacity(BATCH_SIZE);
     let mut total_processed = 0;
 
-    while let Some(result) = stream.next().await {
-        let response = result?;
+    while let Some(response) = stream.try_next().await? {
         if let Some(e) = response.error {
             return Err(anyhow::anyhow!("OAI-PMH error: {:?}", e));
         }
