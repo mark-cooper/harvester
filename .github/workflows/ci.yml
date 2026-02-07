@@ -12,6 +12,22 @@ env:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: harvester
+          POSTGRES_PASSWORD: harvester
+          POSTGRES_DB: harvester_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U harvester -d harvester_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://harvester:harvester@localhost:5432/harvester_test
     steps:
       - uses: actions/checkout@v6
 
