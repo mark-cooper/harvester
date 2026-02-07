@@ -13,6 +13,8 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
     let rules = RuleSet::load(File::open(rules)?)?;
     let mut last_identifier: Option<String> = None;
     let mut total_processed = 0usize;
+    let mut total_failed = 0usize;
+    let mut total_failed_to_mark = 0usize;
 
     loop {
         let params = FetchRecordsParams {
@@ -30,21 +32,41 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
 
         for record in &batch {
             let path = harvester.config.data_dir.join(record.path());
-            let file = std::fs::File::open(path)?;
+            let file = match File::open(&path) {
+                Ok(file) => file,
+                Err(error) => {
+                    let message =
+                        format!("Unable to open metadata file {}: {}", path.display(), error);
+                    if mark_record_failed(harvester, &record.identifier, &message).await {
+                        total_failed += 1;
+                    } else {
+                        total_failed_to_mark += 1;
+                    }
+                    continue;
+                }
+            };
+
             match extract_metadata(&file, &rules) {
                 Ok(metadata) => {
-                    update_record_metadata(harvester, &record.identifier, metadata).await?;
-                    total_processed += 1;
+                    match update_record_metadata(harvester, &record.identifier, metadata).await {
+                        Ok(()) => total_processed += 1,
+                        Err(error) => {
+                            let message = format!("Unable to update parsed metadata: {}", error);
+                            if mark_record_failed(harvester, &record.identifier, &message).await {
+                                total_failed += 1;
+                            } else {
+                                total_failed_to_mark += 1;
+                            }
+                        }
+                    }
                 }
-                Err(e) => {
-                    let params = UpdateStatusParams {
-                        endpoint: &harvester.config.endpoint,
-                        metadata_prefix: &harvester.config.metadata_prefix,
-                        identifier: &record.identifier,
-                        status: OaiRecordStatus::Failed.as_str(),
-                        message: &e.to_string(),
-                    };
-                    do_update_status_query(&harvester.pool, params).await?;
+                Err(error) => {
+                    let message = error.to_string();
+                    if mark_record_failed(harvester, &record.identifier, &message).await {
+                        total_failed += 1;
+                    } else {
+                        total_failed_to_mark += 1;
+                    }
                 }
             }
         }
@@ -54,7 +76,10 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
         }
     }
 
-    println!("Extracted metadata for {} records", total_processed);
+    println!(
+        "Extracted metadata for {} records (failed: {}, failed-to-mark: {})",
+        total_processed, total_failed, total_failed_to_mark
+    );
     Ok(())
 }
 
@@ -145,6 +170,27 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_
         .collect();
 
     Ok(serde_json::Value::Object(json_map))
+}
+
+async fn mark_record_failed(harvester: &Harvester, identifier: &str, message: &str) -> bool {
+    let params = UpdateStatusParams {
+        endpoint: &harvester.config.endpoint,
+        metadata_prefix: &harvester.config.metadata_prefix,
+        identifier,
+        status: OaiRecordStatus::Failed.as_str(),
+        message,
+    };
+
+    match do_update_status_query(&harvester.pool, params).await {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!(
+                "Record {} failed but could not be marked failed (reason: {}; update error: {})",
+                identifier, message, error
+            );
+            false
+        }
+    }
 }
 
 /// Check if element stack ends with the given path
