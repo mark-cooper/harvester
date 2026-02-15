@@ -1,12 +1,12 @@
 use std::{
-    path::{self},
+    path::{self, PathBuf},
     process::Command,
 };
 
 use clap::{Args, Parser, Subcommand};
 use harvester::{
-    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, Harvester, HarvesterArgs,
-    IndexSelectionMode, OaiConfig, db, expand_path,
+    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
+    ArcLightRunOptions, Harvester, HarvesterArgs, OaiConfig, db, expand_path,
 };
 
 /// OAI-PMH harvester
@@ -94,90 +94,21 @@ async fn main() -> anyhow::Result<()> {
             harvester.run(cfg.rules.map(|p| expand_path(&p))).await?;
         }
         Commands::Index(IndexCommands::ArcLight(cfg)) => {
-            let status = Command::new("traject").args(["--version"]).status()?;
-
-            if !status.success() {
-                anyhow::bail!("traject failed with exit code: {:?}", status.code());
-            }
-
-            let configuration = path::absolute(expand_path(&cfg.configuration))?;
-            let data_dir = path::absolute(expand_path(&cfg.dir))?;
-            let repository_file = path::absolute(expand_path(&cfg.repository_file))?;
-
-            if !configuration.is_file() {
-                anyhow::bail!("traject configuration was not found");
-            }
-
-            if !data_dir.is_dir() {
-                anyhow::bail!("base directory was not found");
-            }
-
-            if !repository_file.is_file() {
-                anyhow::bail!("repositories configuration was not found");
-            }
-
             println!("Indexing records into {}", cfg.repository);
-            let config = ArcLightIndexerConfig::new(
-                configuration,
-                data_dir,
-                cfg.repository,
-                cfg.oai_endpoint,
-                cfg.oai_repository,
-                cfg.preview,
-                repository_file,
-                IndexSelectionMode::PendingOnly,
-                None,
-                None,
-                cfg.record_timeout_seconds,
-                cfg.solr_url,
-                cfg.solr_commit_within_ms,
-            );
+            let config = build_arclight_config(cfg, ArcLightRunOptions::pending_only())?;
             let indexer = ArcLightIndexer::new(config, pool);
 
             indexer.run().await?;
         }
         Commands::Index(IndexCommands::Retry(cfg)) => {
-            let status = Command::new("traject").args(["--version"]).status()?;
-
-            if !status.success() {
-                anyhow::bail!("traject failed with exit code: {:?}", status.code());
-            }
-
-            let configuration = path::absolute(expand_path(&cfg.arclight.configuration))?;
-            let data_dir = path::absolute(expand_path(&cfg.arclight.dir))?;
-            let repository_file = path::absolute(expand_path(&cfg.arclight.repository_file))?;
-
-            if !configuration.is_file() {
-                anyhow::bail!("traject configuration was not found");
-            }
-
-            if !data_dir.is_dir() {
-                anyhow::bail!("base directory was not found");
-            }
-
-            if !repository_file.is_file() {
-                anyhow::bail!("repositories configuration was not found");
-            }
-
             println!(
                 "Retrying failed index records into {}",
                 cfg.arclight.repository
             );
-            let config = ArcLightIndexerConfig::new(
-                configuration,
-                data_dir,
-                cfg.arclight.repository,
-                cfg.arclight.oai_endpoint,
-                cfg.arclight.oai_repository,
-                cfg.arclight.preview,
-                repository_file,
-                IndexSelectionMode::FailedOnly,
-                cfg.message_filter,
-                cfg.max_attempts,
-                cfg.arclight.record_timeout_seconds,
-                cfg.arclight.solr_url,
-                cfg.arclight.solr_commit_within_ms,
-            );
+            let config = build_arclight_config(
+                cfg.arclight,
+                ArcLightRunOptions::failed_only(cfg.message_filter, cfg.max_attempts),
+            )?;
             let indexer = ArcLightIndexer::new(config, pool);
 
             indexer.run().await?;
@@ -196,4 +127,56 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn ensure_traject_available() -> anyhow::Result<()> {
+    let status = Command::new("traject").args(["--version"]).status()?;
+
+    if !status.success() {
+        anyhow::bail!("traject failed with exit code: {:?}", status.code());
+    }
+
+    Ok(())
+}
+
+fn resolve_arclight_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
+    let configuration = path::absolute(expand_path(&cfg.configuration))?;
+    let data_dir = path::absolute(expand_path(&cfg.dir))?;
+    let repository_file = path::absolute(expand_path(&cfg.repository_file))?;
+
+    if !configuration.is_file() {
+        anyhow::bail!("traject configuration was not found");
+    }
+
+    if !data_dir.is_dir() {
+        anyhow::bail!("base directory was not found");
+    }
+
+    if !repository_file.is_file() {
+        anyhow::bail!("repositories configuration was not found");
+    }
+
+    Ok((configuration, data_dir, repository_file))
+}
+
+fn build_arclight_config(
+    cfg: ArcLightArgs,
+    run_options: ArcLightRunOptions,
+) -> anyhow::Result<ArcLightIndexerConfig> {
+    ensure_traject_available()?;
+    let (configuration, data_dir, repository_file) = resolve_arclight_paths(&cfg)?;
+
+    Ok(ArcLightIndexerConfig::new(ArcLightIndexerConfigInput {
+        configuration,
+        dir: data_dir,
+        repository: cfg.repository,
+        oai_endpoint: cfg.oai_endpoint,
+        oai_repository: cfg.oai_repository,
+        preview: cfg.preview,
+        repository_file,
+        record_timeout_seconds: cfg.record_timeout_seconds,
+        solr_url: cfg.solr_url,
+        solr_commit_within_ms: cfg.solr_commit_within_ms,
+        run_options,
+    }))
 }

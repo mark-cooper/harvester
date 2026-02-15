@@ -4,8 +4,8 @@ mod indexer;
 use std::path::{Path, PathBuf};
 
 pub use harvester::{
-    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, Harvester, HarvesterArgs,
-    IndexSelectionMode, OaiConfig, OaiRecordId,
+    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
+    ArcLightRunOptions, Harvester, HarvesterArgs, OaiConfig, OaiRecordId,
 };
 
 pub fn expand_path(path: &Path) -> PathBuf {

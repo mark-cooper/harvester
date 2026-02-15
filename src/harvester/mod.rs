@@ -8,7 +8,8 @@ use std::path::{self, PathBuf};
 
 use clap::Args;
 pub use indexer::arclight::{
-    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, IndexSelectionMode,
+    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
+    ArcLightRunOptions,
 };
 pub use oai::{OaiConfig, OaiRecordId};
 

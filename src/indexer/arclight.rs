@@ -65,9 +65,34 @@ pub struct ArcLightArgs {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum IndexSelectionMode {
+enum IndexSelectionMode {
     FailedOnly,
     PendingOnly,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArcLightRunOptions {
+    selection_mode: IndexSelectionMode,
+    message_filter: Option<String>,
+    max_attempts: Option<i32>,
+}
+
+impl ArcLightRunOptions {
+    pub fn failed_only(message_filter: Option<String>, max_attempts: Option<i32>) -> Self {
+        Self {
+            selection_mode: IndexSelectionMode::FailedOnly,
+            message_filter,
+            max_attempts,
+        }
+    }
+
+    pub fn pending_only() -> Self {
+        Self {
+            selection_mode: IndexSelectionMode::PendingOnly,
+            message_filter: None,
+            max_attempts: None,
+        }
+    }
 }
 
 pub struct ArcLightIndexer {
@@ -357,39 +382,37 @@ pub struct ArcLightIndexerConfig {
     metadata_prefix: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ArcLightIndexerConfigInput {
+    pub configuration: PathBuf,
+    pub dir: PathBuf,
+    pub repository: String,
+    pub oai_endpoint: String,
+    pub oai_repository: String,
+    pub preview: bool,
+    pub repository_file: PathBuf,
+    pub record_timeout_seconds: u64,
+    pub solr_url: String,
+    pub solr_commit_within_ms: u64,
+    pub run_options: ArcLightRunOptions,
+}
+
 impl ArcLightIndexerConfig {
-    // TODO: constructor supports validation later if necessary
-    // (for example: parse endpoint/url as uri etc.)
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        configuration: PathBuf,
-        dir: PathBuf,
-        repository: String,
-        oai_endpoint: String,
-        oai_repository: String,
-        preview: bool,
-        repository_file: PathBuf,
-        selection_mode: IndexSelectionMode,
-        message_filter: Option<String>,
-        max_attempts: Option<i32>,
-        record_timeout_seconds: u64,
-        solr_url: String,
-        solr_commit_within_ms: u64,
-    ) -> Self {
+    pub fn new(input: ArcLightIndexerConfigInput) -> Self {
         Self {
-            configuration,
-            dir,
-            repository,
-            oai_endpoint,
-            oai_repository,
-            preview,
-            repository_file,
-            selection_mode,
-            message_filter,
-            max_attempts,
-            record_timeout_seconds,
-            solr_url,
-            solr_commit_within_ms,
+            configuration: input.configuration,
+            dir: input.dir,
+            repository: input.repository,
+            oai_endpoint: input.oai_endpoint,
+            oai_repository: input.oai_repository,
+            preview: input.preview,
+            repository_file: input.repository_file,
+            selection_mode: input.run_options.selection_mode,
+            message_filter: input.run_options.message_filter,
+            max_attempts: input.run_options.max_attempts,
+            record_timeout_seconds: input.record_timeout_seconds,
+            solr_url: input.solr_url,
+            solr_commit_within_ms: input.solr_commit_within_ms,
             metadata_prefix: "oai_ead".to_string(),
         }
     }
