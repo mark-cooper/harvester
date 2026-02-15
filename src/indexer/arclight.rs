@@ -17,7 +17,9 @@ use crate::{
     db::{
         FetchIndexCandidatesParams, UpdateIndexFailureParams, UpdateIndexStatusParams,
         do_mark_index_failure_query, do_mark_index_success_query, do_mark_purge_failure_query,
-        do_mark_purge_success_query, fetch_records_for_indexing, fetch_records_for_purging,
+        do_mark_purge_success_query, fetch_failed_records_for_indexing,
+        fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
+        fetch_pending_records_for_purging,
     },
     indexer::{self, Indexer, truncate_middle},
 };
@@ -60,6 +62,12 @@ pub struct ArcLightArgs {
     /// Solr commit-within window for delete operations (interval commit strategy)
     #[arg(long, default_value_t = 10000)]
     pub solr_commit_within_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum IndexSelectionMode {
+    FailedOnly,
+    PendingOnly,
 }
 
 pub struct ArcLightIndexer {
@@ -195,9 +203,18 @@ impl Indexer for ArcLightIndexer {
                 endpoint: &self.config.oai_endpoint,
                 metadata_prefix: &self.config.metadata_prefix,
                 oai_repository: &self.config.oai_repository,
+                max_attempts: self.config.max_attempts,
+                message_filter: self.config.message_filter.as_deref(),
                 last_identifier,
             };
-            Ok(fetch_records_for_indexing(&self.pool, params).await?)
+            Ok(match self.config.selection_mode {
+                IndexSelectionMode::FailedOnly => {
+                    fetch_failed_records_for_indexing(&self.pool, params).await?
+                }
+                IndexSelectionMode::PendingOnly => {
+                    fetch_pending_records_for_indexing(&self.pool, params).await?
+                }
+            })
         })
     }
 
@@ -210,9 +227,18 @@ impl Indexer for ArcLightIndexer {
                 endpoint: &self.config.oai_endpoint,
                 metadata_prefix: &self.config.metadata_prefix,
                 oai_repository: &self.config.oai_repository,
+                max_attempts: self.config.max_attempts,
+                message_filter: self.config.message_filter.as_deref(),
                 last_identifier,
             };
-            Ok(fetch_records_for_purging(&self.pool, params).await?)
+            Ok(match self.config.selection_mode {
+                IndexSelectionMode::FailedOnly => {
+                    fetch_failed_records_for_purging(&self.pool, params).await?
+                }
+                IndexSelectionMode::PendingOnly => {
+                    fetch_pending_records_for_purging(&self.pool, params).await?
+                }
+            })
         })
     }
 
@@ -322,6 +348,9 @@ pub struct ArcLightIndexerConfig {
     oai_repository: String,
     preview: bool,
     repository_file: PathBuf,
+    selection_mode: IndexSelectionMode,
+    message_filter: Option<String>,
+    max_attempts: Option<i32>,
     record_timeout_seconds: u64,
     solr_url: String,
     solr_commit_within_ms: u64,
@@ -340,6 +369,9 @@ impl ArcLightIndexerConfig {
         oai_repository: String,
         preview: bool,
         repository_file: PathBuf,
+        selection_mode: IndexSelectionMode,
+        message_filter: Option<String>,
+        max_attempts: Option<i32>,
         record_timeout_seconds: u64,
         solr_url: String,
         solr_commit_within_ms: u64,
@@ -352,6 +384,9 @@ impl ArcLightIndexerConfig {
             oai_repository,
             preview,
             repository_file,
+            selection_mode,
+            message_filter,
+            max_attempts,
             record_timeout_seconds,
             solr_url,
             solr_commit_within_ms,

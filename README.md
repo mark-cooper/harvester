@@ -38,6 +38,25 @@ cargo run -- index arclight \
 This uses a range of default values so will only work if your setup is aligned.
 For all options run: `cargo run -- index arclight --help`.
 
+Retry failed index operations for a specific endpoint/repository pair:
+
+```bash
+cargo run -- index retry \
+    allen-doe-research-center \
+    "https://test.archivesspace.org/oai" \
+    "Allen Doe Research Center" \
+    --message-filter "timed out" \
+    --max-attempts 5
+```
+
+Reset index lifecycle state for an endpoint (full reindex/repurge requeue):
+
+```bash
+cargo run -- index reset "https://test.archivesspace.org/oai"
+```
+
+For all options run: `cargo run -- index retry --help` and `cargo run -- index reset --help`.
+
 ### Rules for metadata extraction
 
 This is an optional feature (though required for indexing). Omit the `-r` arg to bypass.

@@ -7,7 +7,9 @@ mod rules;
 use std::path::{self, PathBuf};
 
 use clap::Args;
-pub use indexer::arclight::{ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig};
+pub use indexer::arclight::{
+    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, IndexSelectionMode,
+};
 pub use oai::{OaiConfig, OaiRecordId};
 
 use sqlx::PgPool;
