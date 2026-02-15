@@ -3,7 +3,7 @@ mod support;
 use std::{env, path::Path};
 
 use harvester::{
-    ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput, ArcLightRunOptions,
+    ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput, IndexRunOptions,
 };
 use support::{
     DEFAULT_DATESTAMP, acquire_test_lock, create_temp_dir, create_temp_file, create_traject_shim,
@@ -58,7 +58,7 @@ fn build_config(
     repository_file: std::path::PathBuf,
     solr_url: String,
     preview: bool,
-    run_options: ArcLightRunOptions,
+    run_options: IndexRunOptions,
 ) -> ArcLightIndexerConfig {
     ArcLightIndexerConfig::new(ArcLightIndexerConfigInput {
         configuration,
@@ -106,7 +106,7 @@ async fn index_success_marks_record_indexed() -> anyhow::Result<()> {
         repository_file,
         "http://127.0.0.1:65535/solr/arclight".to_string(),
         false,
-        ArcLightRunOptions::pending_only(),
+        IndexRunOptions::pending_only(),
     );
     let indexer = ArcLightIndexer::new(config, pool.clone());
     indexer.run().await?;
@@ -155,7 +155,7 @@ async fn index_failure_marks_record_index_failed() -> anyhow::Result<()> {
         repository_file,
         "http://127.0.0.1:65535/solr/arclight".to_string(),
         false,
-        ArcLightRunOptions::pending_only(),
+        IndexRunOptions::pending_only(),
     );
     let indexer = ArcLightIndexer::new(config, pool.clone());
     let result = indexer.run().await;
@@ -200,7 +200,7 @@ async fn delete_success_marks_record_purged() -> anyhow::Result<()> {
         repository_file,
         solr.solr_url.clone(),
         false,
-        ArcLightRunOptions::pending_only(),
+        IndexRunOptions::pending_only(),
     );
     let indexer = ArcLightIndexer::new(config, pool.clone());
     indexer.run().await?;
@@ -243,7 +243,7 @@ async fn delete_failure_marks_record_purge_failed() -> anyhow::Result<()> {
         repository_file,
         solr.solr_url.clone(),
         false,
-        ArcLightRunOptions::pending_only(),
+        IndexRunOptions::pending_only(),
     );
     let indexer = ArcLightIndexer::new(config, pool.clone());
     let result = indexer.run().await;
@@ -299,7 +299,7 @@ async fn preview_mode_has_no_side_effects() -> anyhow::Result<()> {
         repository_file,
         "http://127.0.0.1:65535/solr/arclight".to_string(),
         true,
-        ArcLightRunOptions::pending_only(),
+        IndexRunOptions::pending_only(),
     );
     let indexer = ArcLightIndexer::new(config, pool.clone());
     indexer.run().await?;

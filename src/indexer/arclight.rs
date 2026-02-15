@@ -21,7 +21,7 @@ use crate::{
         fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
         fetch_pending_records_for_purging,
     },
-    indexer::{self, Indexer, truncate_middle},
+    indexer::{self, IndexRunOptions, IndexSelectionMode, Indexer, truncate_middle},
 };
 
 #[derive(Debug, Args)]
@@ -64,35 +64,31 @@ pub struct ArcLightArgs {
     pub solr_commit_within_ms: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum IndexSelectionMode {
-    FailedOnly,
-    PendingOnly,
+#[derive(Debug, Args)]
+pub struct ArcLightReindexArgs {
+    /// Source OAI endpoint url
+    pub oai_endpoint: String,
+
+    /// Source OAI repository name
+    pub oai_repository: String,
+
+    /// OAI metadata prefix
+    #[arg(short, long, default_value = "oai_ead")]
+    pub metadata_prefix: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct ArcLightRunOptions {
-    selection_mode: IndexSelectionMode,
-    message_filter: Option<String>,
-    max_attempts: Option<i32>,
-}
+#[derive(Debug, Args)]
+pub struct ArcLightRetryArgs {
+    #[command(flatten)]
+    pub arclight: ArcLightArgs,
 
-impl ArcLightRunOptions {
-    pub fn failed_only(message_filter: Option<String>, max_attempts: Option<i32>) -> Self {
-        Self {
-            selection_mode: IndexSelectionMode::FailedOnly,
-            message_filter,
-            max_attempts,
-        }
-    }
+    /// Optional substring filter on failed index message
+    #[arg(long)]
+    pub message_filter: Option<String>,
 
-    pub fn pending_only() -> Self {
-        Self {
-            selection_mode: IndexSelectionMode::PendingOnly,
-            message_filter: None,
-            max_attempts: None,
-        }
-    }
+    /// Skip failed records at/above this attempt count
+    #[arg(long)]
+    pub max_attempts: Option<i32>,
 }
 
 pub struct ArcLightIndexer {
@@ -394,7 +390,7 @@ pub struct ArcLightIndexerConfigInput {
     pub record_timeout_seconds: u64,
     pub solr_url: String,
     pub solr_commit_within_ms: u64,
-    pub run_options: ArcLightRunOptions,
+    pub run_options: IndexRunOptions,
 }
 
 impl ArcLightIndexerConfig {

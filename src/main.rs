@@ -3,10 +3,11 @@ use std::{
     process::Command,
 };
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use harvester::{
     ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
-    ArcLightRunOptions, Harvester, HarvesterArgs, OaiConfig, db, expand_path,
+    ArcLightReindexArgs, ArcLightRetryArgs, Harvester, HarvesterArgs, IndexRunOptions, OaiConfig,
+    db, expand_path,
 };
 
 /// OAI-PMH harvester
@@ -55,33 +56,6 @@ enum ArcLightCommands {
     Reindex(ArcLightReindexArgs),
 }
 
-#[derive(Debug, Args)]
-struct ArcLightRetryArgs {
-    #[command(flatten)]
-    pub arclight: ArcLightArgs,
-
-    /// Optional substring filter on failed index message
-    #[arg(long)]
-    pub message_filter: Option<String>,
-
-    /// Skip failed records at/above this attempt count
-    #[arg(long)]
-    pub max_attempts: Option<i32>,
-}
-
-#[derive(Debug, Args)]
-struct ArcLightReindexArgs {
-    /// Source OAI endpoint url
-    pub oai_endpoint: String,
-
-    /// Source OAI repository name
-    pub oai_repository: String,
-
-    /// OAI metadata prefix
-    #[arg(short, long, default_value = "oai_ead")]
-    pub metadata_prefix: String,
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env first, then .env.local can override
@@ -108,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Index(IndexCommands::ArcLight(command)) => match command {
             ArcLightCommands::Run(cfg) => {
                 println!("Indexing records into {}", cfg.repository);
-                let config = build_arclight_config(cfg, ArcLightRunOptions::pending_only())?;
+                let config = build_arclight_config(cfg, IndexRunOptions::pending_only())?;
                 let indexer = ArcLightIndexer::new(config, pool.clone());
 
                 indexer.run().await?;
@@ -120,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
                 );
                 let config = build_arclight_config(
                     cfg.arclight,
-                    ArcLightRunOptions::failed_only(cfg.message_filter, cfg.max_attempts),
+                    IndexRunOptions::failed_only(cfg.message_filter, cfg.max_attempts),
                 )?;
                 let indexer = ArcLightIndexer::new(config, pool.clone());
 
@@ -176,7 +150,7 @@ fn resolve_arclight_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBu
 
 fn build_arclight_config(
     cfg: ArcLightArgs,
-    run_options: ArcLightRunOptions,
+    run_options: IndexRunOptions,
 ) -> anyhow::Result<ArcLightIndexerConfig> {
     ensure_traject_available()?;
     let (configuration, data_dir, repository_file) = resolve_arclight_paths(&cfg)?;

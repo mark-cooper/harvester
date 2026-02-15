@@ -2,10 +2,41 @@ pub mod arclight;
 
 use futures::{StreamExt, future::BoxFuture, stream};
 
-use crate::harvester::oai::OaiRecordId;
+use crate::OaiRecordId;
 
 const BATCH_SIZE: usize = 100;
 const CONCURRENCY: usize = 10;
+
+#[derive(Debug, Clone)]
+pub struct IndexRunOptions {
+    pub(crate) selection_mode: IndexSelectionMode,
+    pub(crate) message_filter: Option<String>,
+    pub(crate) max_attempts: Option<i32>,
+}
+
+impl IndexRunOptions {
+    pub fn failed_only(message_filter: Option<String>, max_attempts: Option<i32>) -> Self {
+        Self {
+            selection_mode: IndexSelectionMode::FailedOnly,
+            message_filter,
+            max_attempts,
+        }
+    }
+
+    pub fn pending_only() -> Self {
+        Self {
+            selection_mode: IndexSelectionMode::PendingOnly,
+            message_filter: None,
+            max_attempts: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum IndexSelectionMode {
+    FailedOnly,
+    PendingOnly,
+}
 
 struct ProcessStats {
     succeeded: usize,

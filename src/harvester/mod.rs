@@ -7,15 +7,9 @@ mod rules;
 use std::path::{self, PathBuf};
 
 use clap::Args;
-pub use indexer::arclight::{
-    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
-    ArcLightRunOptions,
-};
 pub use oai::{OaiConfig, OaiRecordId};
 
 use sqlx::PgPool;
-
-use crate::indexer;
 
 #[derive(Debug, Args)]
 pub struct HarvesterArgs {
