@@ -29,19 +29,19 @@ cargo run -- harvest -m oai_ead -r fixtures/rules.txt https://test.archivesspace
 Using cargo for indexing (ArcLight):
 
 ```bash
-cargo run -- index arclight \
+cargo run -- index arclight run \
     allen-doe-research-center \
     "https://test.archivesspace.org/oai" \
     "Allen Doe Research Center"
 ```
 
 This uses a range of default values so will only work if your setup is aligned.
-For all options run: `cargo run -- index arclight --help`.
+For all options run: `cargo run -- index arclight run --help`.
 
 Retry failed index operations for a specific endpoint/repository pair:
 
 ```bash
-cargo run -- index retry \
+cargo run -- index arclight retry \
     allen-doe-research-center \
     "https://test.archivesspace.org/oai" \
     "Allen Doe Research Center" \
@@ -49,13 +49,15 @@ cargo run -- index retry \
     --max-attempts 5
 ```
 
-Reset index lifecycle state for an endpoint (full reindex/repurge requeue):
+Requeue all parsed/deleted records for a specific endpoint/repository pair:
 
 ```bash
-cargo run -- index reset "https://test.archivesspace.org/oai"
+cargo run -- index arclight reindex \
+    "https://test.archivesspace.org/oai" \
+    "Allen Doe Research Center"
 ```
 
-For all options run: `cargo run -- index retry --help` and `cargo run -- index reset --help`.
+For all options run: `cargo run -- index arclight retry --help` and `cargo run -- index arclight reindex --help`.
 
 ### Rules for metadata extraction
 

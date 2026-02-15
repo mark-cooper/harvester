@@ -35,25 +35,24 @@ enum Commands {
 
 #[derive(Debug, Subcommand)]
 enum IndexCommands {
+    /// ArcLight index operations
+    #[command(name = "arclight", subcommand)]
+    ArcLight(ArcLightCommands),
+}
+
+#[derive(Debug, Subcommand)]
+enum ArcLightCommands {
     /// Index ready records (pending index state)
-    #[command(name = "arclight", arg_required_else_help = true)]
-    ArcLight(ArcLightArgs),
+    #[command(name = "run", arg_required_else_help = true)]
+    Run(ArcLightArgs),
+
     /// Retry only failed index/purge records
     #[command(name = "retry", arg_required_else_help = true)]
     Retry(ArcLightRetryArgs),
-    /// Reset all parsed/deleted records to pending index state
-    #[command(name = "reset", arg_required_else_help = true)]
-    Reset(IndexResetArgs),
-}
 
-#[derive(Debug, Args)]
-struct IndexResetArgs {
-    /// Source OAI endpoint url
-    pub endpoint: String,
-
-    /// OAI metadata prefix
-    #[arg(short, long, default_value = "oai_ead")]
-    pub metadata_prefix: String,
+    /// Requeue all parsed/deleted records for this OAI repository
+    #[command(name = "reindex", arg_required_else_help = true)]
+    Reindex(ArcLightReindexArgs),
 }
 
 #[derive(Debug, Args)]
@@ -68,6 +67,19 @@ struct ArcLightRetryArgs {
     /// Skip failed records at/above this attempt count
     #[arg(long)]
     pub max_attempts: Option<i32>,
+}
+
+#[derive(Debug, Args)]
+struct ArcLightReindexArgs {
+    /// Source OAI endpoint url
+    pub oai_endpoint: String,
+
+    /// Source OAI repository name
+    pub oai_repository: String,
+
+    /// OAI metadata prefix
+    #[arg(short, long, default_value = "oai_ead")]
+    pub metadata_prefix: String,
 }
 
 #[tokio::main]
@@ -93,37 +105,40 @@ async fn main() -> anyhow::Result<()> {
             let harvester = Harvester::new(config, pool);
             harvester.run(cfg.rules.map(|p| expand_path(&p))).await?;
         }
-        Commands::Index(IndexCommands::ArcLight(cfg)) => {
-            println!("Indexing records into {}", cfg.repository);
-            let config = build_arclight_config(cfg, ArcLightRunOptions::pending_only())?;
-            let indexer = ArcLightIndexer::new(config, pool);
+        Commands::Index(IndexCommands::ArcLight(command)) => match command {
+            ArcLightCommands::Run(cfg) => {
+                println!("Indexing records into {}", cfg.repository);
+                let config = build_arclight_config(cfg, ArcLightRunOptions::pending_only())?;
+                let indexer = ArcLightIndexer::new(config, pool.clone());
 
-            indexer.run().await?;
-        }
-        Commands::Index(IndexCommands::Retry(cfg)) => {
-            println!(
-                "Retrying failed index records into {}",
-                cfg.arclight.repository
-            );
-            let config = build_arclight_config(
-                cfg.arclight,
-                ArcLightRunOptions::failed_only(cfg.message_filter, cfg.max_attempts),
-            )?;
-            let indexer = ArcLightIndexer::new(config, pool);
+                indexer.run().await?;
+            }
+            ArcLightCommands::Retry(cfg) => {
+                println!(
+                    "Retrying failed index records into {}",
+                    cfg.arclight.repository
+                );
+                let config = build_arclight_config(
+                    cfg.arclight,
+                    ArcLightRunOptions::failed_only(cfg.message_filter, cfg.max_attempts),
+                )?;
+                let indexer = ArcLightIndexer::new(config, pool.clone());
 
-            indexer.run().await?;
-        }
-        Commands::Index(IndexCommands::Reset(cfg)) => {
-            let params = db::ResetIndexStateParams {
-                endpoint: &cfg.endpoint,
-                metadata_prefix: &cfg.metadata_prefix,
-            };
-            let result = db::do_reset_index_state_query(&pool, params).await?;
-            println!(
-                "Reset {} record(s) to pending index status",
-                result.rows_affected()
-            );
-        }
+                indexer.run().await?;
+            }
+            ArcLightCommands::Reindex(cfg) => {
+                let params = db::ReindexStateParams {
+                    endpoint: &cfg.oai_endpoint,
+                    metadata_prefix: &cfg.metadata_prefix,
+                    oai_repository: &cfg.oai_repository,
+                };
+                let result = db::do_reindex_state_query(&pool, params).await?;
+                println!(
+                    "Requeued {} record(s) to pending index status",
+                    result.rows_affected()
+                );
+            }
+        },
     }
 
     Ok(())

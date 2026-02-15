@@ -51,9 +51,10 @@ pub struct UpdateIndexFailureParams<'a> {
     pub message: &'a str,
 }
 
-pub struct ResetIndexStateParams<'a> {
+pub struct ReindexStateParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
+    pub oai_repository: &'a str,
 }
 
 pub async fn do_update_status_query(
@@ -448,9 +449,9 @@ pub async fn do_mark_purge_failure_query(
     .await
 }
 
-pub async fn do_reset_index_state_query(
+pub async fn do_reindex_state_query(
     pool: &PgPool,
-    params: ResetIndexStateParams<'_>,
+    params: ReindexStateParams<'_>,
 ) -> Result<PgQueryResult, Error> {
     sqlx::query(
         r#"
@@ -464,6 +465,7 @@ pub async fn do_reset_index_state_query(
         WHERE endpoint = $1
           AND metadata_prefix = $2
           AND (status = $4 OR status = $5)
+          AND metadata->'repository' ? $6
         "#,
     )
     .bind(params.endpoint)
@@ -471,6 +473,7 @@ pub async fn do_reset_index_state_query(
     .bind(OaiIndexStatus::Pending.as_str())
     .bind(OaiRecordStatus::Parsed.as_str())
     .bind(OaiRecordStatus::Deleted.as_str())
+    .bind(params.oai_repository)
     .execute(pool)
     .await
 }

@@ -3,9 +3,9 @@ mod support;
 use harvester::{
     OaiRecordId,
     db::{
-        FetchIndexCandidatesParams, ResetIndexStateParams, UpdateIndexFailureParams,
+        FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexFailureParams,
         UpdateIndexStatusParams, do_mark_index_failure_query, do_mark_index_success_query,
-        do_mark_purge_failure_query, do_mark_purge_success_query, do_reset_index_state_query,
+        do_mark_purge_failure_query, do_mark_purge_success_query, do_reindex_state_query,
         fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
         fetch_pending_records_for_indexing, fetch_pending_records_for_purging,
     },
@@ -289,7 +289,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
 }
 
 #[tokio::test]
-async fn reset_requeues_all_parsed_and_deleted_records() -> anyhow::Result<()> {
+async fn reindex_requeues_only_matching_repository_records() -> anyhow::Result<()> {
     let _guard = acquire_test_lock().await;
     let pool = setup_test_pool().await?;
 
@@ -317,12 +317,25 @@ async fn reset_requeues_all_parsed_and_deleted_records() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
-
-    let result = do_reset_index_state_query(
+    insert_record_with_index(
         &pool,
-        ResetIndexStateParams {
+        ENDPOINT,
+        "parsed-other-repository",
+        DEFAULT_DATESTAMP,
+        "parsed",
+        "indexed",
+        "should stay indexed",
+        3,
+        metadata("Other Repository"),
+    )
+    .await?;
+
+    let result = do_reindex_state_query(
+        &pool,
+        ReindexStateParams {
             endpoint: ENDPOINT,
             metadata_prefix: METADATA_PREFIX,
+            oai_repository: REPOSITORY,
         },
     )
     .await?;
@@ -341,6 +354,13 @@ async fn reset_requeues_all_parsed_and_deleted_records() -> anyhow::Result<()> {
     assert_eq!(deleted.index_attempts, 0);
     assert_eq!(deleted.index_message, "");
     assert!(!deleted.purged_at_set);
+
+    let other_repository =
+        fetch_record_snapshot(&pool, ENDPOINT, "parsed-other-repository").await?;
+    assert_eq!(other_repository.status, "parsed");
+    assert_eq!(other_repository.index_status, "indexed");
+    assert_eq!(other_repository.index_attempts, 3);
+    assert_eq!(other_repository.index_message, "should stay indexed");
 
     Ok(())
 }
