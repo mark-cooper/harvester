@@ -6,6 +6,13 @@ use oai_pmh::{Client, ListIdentifiersArgs};
 
 const BATCH_SIZE: usize = 100;
 
+#[derive(Default)]
+struct ImportStats {
+    processed: usize,
+    imported: usize,
+    deleted: usize,
+}
+
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     let client = Client::new(&harvester.config.endpoint)?;
     client.identify().await?;
@@ -14,7 +21,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     let mut stream = client.list_identifiers(args).await?;
 
     let mut batch = Vec::with_capacity(BATCH_SIZE);
-    let mut total_processed = 0;
+    let mut total = ImportStats::default();
 
     while let Some(response) = stream.try_next().await? {
         if let Some(e) = response.error {
@@ -26,7 +33,10 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
                 batch.push(OaiRecordImport::from(header));
 
                 if batch.len() >= BATCH_SIZE {
-                    total_processed += batch_upsert_records(harvester, &batch).await?;
+                    let stats = batch_upsert_records(harvester, &batch).await?;
+                    total.processed += stats.processed;
+                    total.imported += stats.imported;
+                    total.deleted += stats.deleted;
                     batch.clear();
                 }
             }
@@ -34,19 +44,25 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     }
 
     if !batch.is_empty() {
-        total_processed += batch_upsert_records(harvester, &batch).await?;
+        let stats = batch_upsert_records(harvester, &batch).await?;
+        total.processed += stats.processed;
+        total.imported += stats.imported;
+        total.deleted += stats.deleted;
     }
 
-    println!("Processed {} records", total_processed);
+    println!(
+        "Processed {} records (imported: {}, deleted: {})",
+        total.processed, total.imported, total.deleted
+    );
     Ok(())
 }
 
 async fn batch_upsert_records(
     harvester: &Harvester,
     records: &[OaiRecordImport],
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<ImportStats> {
     if records.is_empty() {
-        return Ok(0);
+        return Ok(ImportStats::default());
     }
 
     let identifiers: Vec<_> = records.iter().map(|r| r.identifier.as_str()).collect();
@@ -54,7 +70,7 @@ async fn batch_upsert_records(
     let statuses: Vec<_> = records.iter().map(|r| r.status.as_str()).collect();
     let batch_len = records.len() as i32;
 
-    let result = sqlx::query(
+    let statuses = sqlx::query_scalar::<_, String>(
         r#"
         INSERT INTO oai_records (
             endpoint, metadata_prefix, identifier, datestamp, status, message, last_checked_at
@@ -92,6 +108,7 @@ async fn batch_upsert_records(
             last_checked_at = EXCLUDED.last_checked_at
         WHERE oai_records.status != $7
         AND oai_records.datestamp != EXCLUDED.datestamp
+        RETURNING status
         "#,
     )
     .bind(&harvester.config.endpoint)
@@ -101,8 +118,19 @@ async fn batch_upsert_records(
     .bind(&statuses)
     .bind(batch_len)
     .bind(OaiRecordStatus::Failed.as_str())
-    .execute(&harvester.pool)
+    .fetch_all(&harvester.pool)
     .await?;
 
-    Ok(result.rows_affected() as usize)
+    let deleted = statuses
+        .iter()
+        .filter(|status| status.as_str() == OaiRecordStatus::Deleted.as_str())
+        .count();
+    let processed = statuses.len();
+    let imported = processed.saturating_sub(deleted);
+
+    Ok(ImportStats {
+        processed,
+        imported,
+        deleted,
+    })
 }
