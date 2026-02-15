@@ -1,0 +1,16 @@
+.claude
+.env
+.env.*
+.dockerignore
+.git
+.github
+.gitignore
+
+data
+fixtures
+scripts
+target
+tests
+
+Makefile
+README.md
