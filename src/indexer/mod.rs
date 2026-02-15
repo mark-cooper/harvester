@@ -7,6 +7,11 @@ use crate::harvester::oai::OaiRecordId;
 const BATCH_SIZE: usize = 100;
 const CONCURRENCY: usize = 10;
 
+struct ProcessStats {
+    succeeded: usize,
+    failed: usize,
+}
+
 pub trait Indexer: Sync {
     fn fetch_records_to_index<'a>(
         &'a self,
@@ -21,13 +26,19 @@ pub trait Indexer: Sync {
 }
 
 pub async fn run<T: Indexer>(indexer: &T) -> anyhow::Result<()> {
-    let total_indexed =
-        process_records(indexer, T::fetch_records_to_index, T::index_record).await?;
-    let total_deleted =
-        process_records(indexer, T::fetch_records_to_purge, T::delete_record).await?;
+    let indexed = process_records(indexer, T::fetch_records_to_index, T::index_record).await?;
+    let deleted = process_records(indexer, T::fetch_records_to_purge, T::delete_record).await?;
 
-    println!("Indexed records: {}", total_indexed);
-    println!("Deleted records: {}", total_deleted);
+    println!("Indexed records: {}", indexed.succeeded);
+    println!("Deleted records: {}", deleted.succeeded);
+    println!("Failed index operations: {}", indexed.failed);
+    println!("Failed delete operations: {}", deleted.failed);
+
+    let total_failed = indexed.failed + deleted.failed;
+    if total_failed > 0 {
+        anyhow::bail!("index run completed with {} failed record(s)", total_failed);
+    }
+
     Ok(())
 }
 
@@ -35,9 +46,10 @@ async fn process_records<T: Indexer>(
     indexer: &T,
     fetch: for<'a> fn(&'a T, Option<&'a str>) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>>,
     action: for<'a> fn(&'a T, &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<ProcessStats> {
     let mut last_identifier: Option<String> = None;
-    let mut total = 0usize;
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
 
     loop {
         let batch = fetch(indexer, last_identifier.as_deref()).await?;
@@ -55,8 +67,11 @@ async fn process_records<T: Indexer>(
 
         for result in results {
             match result {
-                Ok(()) => total += 1,
-                Err(e) => eprintln!("Failed to process: {}", e),
+                Ok(()) => succeeded += 1,
+                Err(e) => {
+                    failed += 1;
+                    eprintln!("Failed to process: {}", e);
+                }
             }
         }
 
@@ -65,7 +80,7 @@ async fn process_records<T: Indexer>(
         }
     }
 
-    Ok(total)
+    Ok(ProcessStats { succeeded, failed })
 }
 
 /// Get head & tail of string for debugging shelled-out cmds

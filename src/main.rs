@@ -94,7 +94,9 @@ async fn main() -> anyhow::Result<()> {
                 cfg.oai_repository,
                 cfg.preview,
                 repository_file,
+                cfg.record_timeout_seconds,
                 cfg.solr_url,
+                cfg.solr_commit_within_ms,
             );
             let indexer = ArcLightIndexer::new(config, pool);
 

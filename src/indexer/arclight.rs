@@ -1,16 +1,23 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    process::{Output, Stdio},
+    time::Duration,
+};
 
 use clap::Args;
 use futures::future::BoxFuture;
+use reqwest::Client;
 use sqlx::PgPool;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::{
     OaiRecordId,
     db::{
         FetchIndexCandidatesParams, UpdateIndexFailureParams, UpdateIndexStatusParams,
-        do_mark_index_failure_query, do_mark_index_success_query, fetch_records_for_indexing,
-        fetch_records_for_purging,
+        do_mark_index_failure_query, do_mark_index_success_query, do_mark_purge_failure_query,
+        do_mark_purge_success_query, fetch_records_for_indexing, fetch_records_for_purging,
     },
     indexer::{self, Indexer, truncate_middle},
 };
@@ -45,20 +52,136 @@ pub struct ArcLightArgs {
     /// Solr url
     #[arg(short, long, default_value = "http://127.0.0.1:8983/solr/arclight")]
     pub solr_url: String,
+
+    /// Per-record timeout for traject and Solr operations
+    #[arg(long, default_value_t = 300)]
+    pub record_timeout_seconds: u64,
+
+    /// Solr commit-within window for delete operations (interval commit strategy)
+    #[arg(long, default_value_t = 10000)]
+    pub solr_commit_within_ms: u64,
 }
 
 pub struct ArcLightIndexer {
     config: ArcLightIndexerConfig,
+    client: Client,
     pool: PgPool,
 }
 
 impl ArcLightIndexer {
     pub fn new(config: ArcLightIndexerConfig, pool: PgPool) -> Self {
-        Self { config, pool }
+        Self {
+            config,
+            client: Client::new(),
+            pool,
+        }
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
         indexer::run(self).await
+    }
+
+    fn solr_update_url(&self) -> String {
+        format!("{}/update", self.config.solr_url.trim_end_matches('/'))
+    }
+
+    fn timeout_duration(&self) -> Duration {
+        Duration::from_secs(self.config.record_timeout_seconds)
+    }
+
+    async fn mark_index_failure(&self, record: &OaiRecordId, message: &str) -> anyhow::Result<()> {
+        let params = UpdateIndexFailureParams {
+            endpoint: &self.config.oai_endpoint,
+            metadata_prefix: &self.config.metadata_prefix,
+            identifier: &record.identifier,
+            message,
+        };
+        do_mark_index_failure_query(&self.pool, params).await?;
+        Ok(())
+    }
+
+    async fn mark_purge_failure(&self, record: &OaiRecordId, message: &str) -> anyhow::Result<()> {
+        let params = UpdateIndexFailureParams {
+            endpoint: &self.config.oai_endpoint,
+            metadata_prefix: &self.config.metadata_prefix,
+            identifier: &record.identifier,
+            message,
+        };
+        do_mark_purge_failure_query(&self.pool, params).await?;
+        Ok(())
+    }
+
+    async fn run_traject(&self, record: &OaiRecordId) -> anyhow::Result<Output> {
+        let path = self.config.dir.join(record.path());
+
+        let mut child = Command::new("traject")
+            .arg("-i")
+            .arg("xml")
+            .arg("-c")
+            .arg(&self.config.configuration)
+            .arg("-s")
+            .arg(format!("repository={}", &self.config.repository))
+            .arg("-s")
+            .arg(format!("id={}", &record.fingerprint))
+            .arg("-u")
+            .arg(&self.config.solr_url)
+            .arg(path)
+            .env("REPOSITORY_FILE", &self.config.repository_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture traject stdout"))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture traject stderr"))?;
+
+        let stdout_task = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            stdout.read_to_end(&mut buf).await?;
+            Ok::<Vec<u8>, std::io::Error>(buf)
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            stderr.read_to_end(&mut buf).await?;
+            Ok::<Vec<u8>, std::io::Error>(buf)
+        });
+
+        let status = match timeout(self.timeout_duration(), child.wait()).await {
+            Ok(Ok(status)) => status,
+            Ok(Err(error)) => {
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                return Err(error.into());
+            }
+            Err(_) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                anyhow::bail!(
+                    "traject timed out after {}s",
+                    self.config.record_timeout_seconds
+                );
+            }
+        };
+
+        let stdout = stdout_task
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to collect traject stdout output: {}", err))??;
+        let stderr = stderr_task
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to collect traject stderr output: {}", err))??;
+
+        Ok(Output {
+            status,
+            stdout,
+            stderr,
+        })
     }
 }
 
@@ -100,23 +223,14 @@ impl Indexer for ArcLightIndexer {
                 return Ok(());
             }
 
-            let path = self.config.dir.join(record.path());
-
-            let output = Command::new("traject")
-                .arg("-i")
-                .arg("xml")
-                .arg("-c")
-                .arg(&self.config.configuration)
-                .arg("-s")
-                .arg(format!("repository={}", &self.config.repository))
-                .arg("-s")
-                .arg(format!("id={}", &record.fingerprint))
-                .arg("-u")
-                .arg(&self.config.solr_url)
-                .arg(path)
-                .env("REPOSITORY_FILE", &self.config.repository_file)
-                .output()
-                .await?;
+            let output = match self.run_traject(record).await {
+                Ok(output) => output,
+                Err(error) => {
+                    let message = truncate_middle(&error.to_string(), 200, 200);
+                    self.mark_index_failure(record, &message).await?;
+                    anyhow::bail!("{}", message);
+                }
+            };
 
             if output.status.success() {
                 let params = UpdateIndexStatusParams {
@@ -128,13 +242,7 @@ impl Indexer for ArcLightIndexer {
                 Ok(())
             } else {
                 let stderr = truncate_middle(&String::from_utf8_lossy(&output.stderr), 200, 200);
-                let params = UpdateIndexFailureParams {
-                    endpoint: &self.config.oai_endpoint,
-                    metadata_prefix: &self.config.metadata_prefix,
-                    identifier: &record.identifier,
-                    message: &stderr,
-                };
-                do_mark_index_failure_query(&self.pool, params).await?;
+                self.mark_index_failure(record, &stderr).await?;
                 anyhow::bail!("traject failed: {}", stderr);
             }
         })
@@ -142,9 +250,64 @@ impl Indexer for ArcLightIndexer {
 
     fn delete_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            // TODO: implement Solr delete
-            // status "purged"
-            let _ = record;
+            if self.config.preview {
+                println!("Would delete record: {}", record.identifier);
+                return Ok(());
+            }
+
+            let payload = serde_json::json!({
+                "delete": {
+                    "query": format!("_root_:{}", record.fingerprint),
+                    "commitWithin": self.config.solr_commit_within_ms
+                }
+            });
+            let payload = payload.to_string();
+
+            let response = match timeout(
+                self.timeout_duration(),
+                self.client
+                    .post(self.solr_update_url())
+                    .header("Content-Type", "application/json")
+                    .body(payload)
+                    .send(),
+            )
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => {
+                    let message = truncate_middle(
+                        &format!("failed to call Solr delete API: {}", error),
+                        200,
+                        200,
+                    );
+                    self.mark_purge_failure(record, &message).await?;
+                    anyhow::bail!("{}", message);
+                }
+                Err(_) => {
+                    let message = format!(
+                        "Solr delete timed out after {}s",
+                        self.config.record_timeout_seconds
+                    );
+                    self.mark_purge_failure(record, &message).await?;
+                    anyhow::bail!("{}", message);
+                }
+            };
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                let body = truncate_middle(&body, 200, 200);
+                let message = format!("Solr delete API returned {}: {}", status, body);
+                self.mark_purge_failure(record, &message).await?;
+                anyhow::bail!("{}", message);
+            }
+
+            let params = UpdateIndexStatusParams {
+                endpoint: &self.config.oai_endpoint,
+                metadata_prefix: &self.config.metadata_prefix,
+                identifier: &record.identifier,
+            };
+            do_mark_purge_success_query(&self.pool, params).await?;
             Ok(())
         })
     }
@@ -159,7 +322,9 @@ pub struct ArcLightIndexerConfig {
     oai_repository: String,
     preview: bool,
     repository_file: PathBuf,
+    record_timeout_seconds: u64,
     solr_url: String,
+    solr_commit_within_ms: u64,
     metadata_prefix: String,
 }
 
@@ -175,7 +340,9 @@ impl ArcLightIndexerConfig {
         oai_repository: String,
         preview: bool,
         repository_file: PathBuf,
+        record_timeout_seconds: u64,
         solr_url: String,
+        solr_commit_within_ms: u64,
     ) -> Self {
         Self {
             configuration,
@@ -185,7 +352,9 @@ impl ArcLightIndexerConfig {
             oai_repository,
             preview,
             repository_file,
+            record_timeout_seconds,
             solr_url,
+            solr_commit_within_ms,
             metadata_prefix: "oai_ead".to_string(),
         }
     }
