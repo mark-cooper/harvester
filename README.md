@@ -79,5 +79,7 @@ repository,repository/corpname,required
 
 ```bash
 PGHOST=localhost PGUSER=admin PGPASSWORD=admin psql \
-    -c "TRUNCATE TABLE oai_records;" -d harvester
+    -c "DROP DATABASE harvester;"
+
+./scripts/init_db.sh
 ```
