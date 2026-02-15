@@ -1,10 +1,11 @@
+pub mod cli;
+pub mod config;
+
 use std::{
-    path::PathBuf,
     process::{Output, Stdio},
     time::Duration,
 };
 
-use clap::Args;
 use futures::future::BoxFuture;
 use reqwest::Client;
 use sqlx::PgPool;
@@ -21,75 +22,10 @@ use crate::{
         fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
         fetch_pending_records_for_purging,
     },
-    indexer::{self, IndexRunOptions, IndexSelectionMode, Indexer, truncate_middle},
+    indexer::{self, IndexSelectionMode, Indexer, truncate_middle},
 };
 
-#[derive(Debug, Args)]
-pub struct ArcLightArgs {
-    /// Target repository id
-    pub repository: String,
-
-    /// Source OAI endpoint url
-    pub oai_endpoint: String,
-
-    /// Source OAI repository name
-    pub oai_repository: String,
-
-    /// Traject configuration file path
-    #[arg(short, long, default_value = "traject/ead2_config.rb")]
-    pub configuration: PathBuf,
-
-    /// EAD base directory
-    #[arg(short, long, default_value = "data")]
-    pub dir: PathBuf,
-
-    /// Preview mode (show matching records, do not index or delete)
-    #[arg(short, long, default_value_t = false)]
-    pub preview: bool,
-
-    /// Repositories yaml file
-    #[arg(short, long, default_value = "config/repositories.yml")]
-    pub repository_file: PathBuf,
-
-    /// Solr url
-    #[arg(short, long, default_value = "http://127.0.0.1:8983/solr/arclight")]
-    pub solr_url: String,
-
-    /// Per-record timeout for traject and Solr operations
-    #[arg(long, default_value_t = 300)]
-    pub record_timeout_seconds: u64,
-
-    /// Solr commit-within window for delete operations (interval commit strategy)
-    #[arg(long, default_value_t = 10000)]
-    pub solr_commit_within_ms: u64,
-}
-
-#[derive(Debug, Args)]
-pub struct ArcLightReindexArgs {
-    /// Source OAI endpoint url
-    pub oai_endpoint: String,
-
-    /// Source OAI repository name
-    pub oai_repository: String,
-
-    /// OAI metadata prefix
-    #[arg(short, long, default_value = "oai_ead")]
-    pub metadata_prefix: String,
-}
-
-#[derive(Debug, Args)]
-pub struct ArcLightRetryArgs {
-    #[command(flatten)]
-    pub arclight: ArcLightArgs,
-
-    /// Optional substring filter on failed index message
-    #[arg(long)]
-    pub message_filter: Option<String>,
-
-    /// Skip failed records at/above this attempt count
-    #[arg(long)]
-    pub max_attempts: Option<i32>,
-}
+use config::ArcLightIndexerConfig;
 
 pub struct ArcLightIndexer {
     config: ArcLightIndexerConfig,
@@ -357,59 +293,5 @@ impl Indexer for ArcLightIndexer {
             do_mark_purge_success_query(&self.pool, params).await?;
             Ok(())
         })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ArcLightIndexerConfig {
-    configuration: PathBuf,
-    dir: PathBuf,
-    repository: String,
-    oai_endpoint: String,
-    oai_repository: String,
-    preview: bool,
-    repository_file: PathBuf,
-    selection_mode: IndexSelectionMode,
-    message_filter: Option<String>,
-    max_attempts: Option<i32>,
-    record_timeout_seconds: u64,
-    solr_url: String,
-    solr_commit_within_ms: u64,
-    metadata_prefix: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ArcLightIndexerConfigInput {
-    pub configuration: PathBuf,
-    pub dir: PathBuf,
-    pub repository: String,
-    pub oai_endpoint: String,
-    pub oai_repository: String,
-    pub preview: bool,
-    pub repository_file: PathBuf,
-    pub record_timeout_seconds: u64,
-    pub solr_url: String,
-    pub solr_commit_within_ms: u64,
-    pub run_options: IndexRunOptions,
-}
-
-impl ArcLightIndexerConfig {
-    pub fn new(input: ArcLightIndexerConfigInput) -> Self {
-        Self {
-            configuration: input.configuration,
-            dir: input.dir,
-            repository: input.repository,
-            oai_endpoint: input.oai_endpoint,
-            oai_repository: input.oai_repository,
-            preview: input.preview,
-            repository_file: input.repository_file,
-            selection_mode: input.run_options.selection_mode,
-            message_filter: input.run_options.message_filter,
-            max_attempts: input.run_options.max_attempts,
-            record_timeout_seconds: input.record_timeout_seconds,
-            solr_url: input.solr_url,
-            solr_commit_within_ms: input.solr_commit_within_ms,
-            metadata_prefix: "oai_ead".to_string(),
-        }
     }
 }

@@ -1,13 +1,9 @@
-use std::{
-    path::{self, PathBuf},
-    process::Command,
-};
+use std::path;
 
 use clap::{Parser, Subcommand};
 use harvester::{
-    ArcLightArgs, ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
-    ArcLightReindexArgs, ArcLightRetryArgs, Harvester, HarvesterArgs, IndexRunOptions, OaiConfig,
-    db, expand_path,
+    ArcLightArgs, ArcLightIndexer, ArcLightReindexArgs, ArcLightRetryArgs, Harvester,
+    HarvesterArgs, IndexRunOptions, OaiConfig, build_arclight_config, db, expand_path,
 };
 
 /// OAI-PMH harvester
@@ -116,56 +112,4 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-fn ensure_traject_available() -> anyhow::Result<()> {
-    let status = Command::new("traject").args(["--version"]).status()?;
-
-    if !status.success() {
-        anyhow::bail!("traject failed with exit code: {:?}", status.code());
-    }
-
-    Ok(())
-}
-
-fn resolve_arclight_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
-    let configuration = path::absolute(expand_path(&cfg.configuration))?;
-    let data_dir = path::absolute(expand_path(&cfg.dir))?;
-    let repository_file = path::absolute(expand_path(&cfg.repository_file))?;
-
-    if !configuration.is_file() {
-        anyhow::bail!("traject configuration was not found");
-    }
-
-    if !data_dir.is_dir() {
-        anyhow::bail!("base directory was not found");
-    }
-
-    if !repository_file.is_file() {
-        anyhow::bail!("repositories configuration was not found");
-    }
-
-    Ok((configuration, data_dir, repository_file))
-}
-
-fn build_arclight_config(
-    cfg: ArcLightArgs,
-    run_options: IndexRunOptions,
-) -> anyhow::Result<ArcLightIndexerConfig> {
-    ensure_traject_available()?;
-    let (configuration, data_dir, repository_file) = resolve_arclight_paths(&cfg)?;
-
-    Ok(ArcLightIndexerConfig::new(ArcLightIndexerConfigInput {
-        configuration,
-        dir: data_dir,
-        repository: cfg.repository,
-        oai_endpoint: cfg.oai_endpoint,
-        oai_repository: cfg.oai_repository,
-        preview: cfg.preview,
-        repository_file,
-        record_timeout_seconds: cfg.record_timeout_seconds,
-        solr_url: cfg.solr_url,
-        solr_commit_within_ms: cfg.solr_commit_within_ms,
-        run_options,
-    }))
 }

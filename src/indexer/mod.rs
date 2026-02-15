@@ -1,5 +1,7 @@
 pub mod arclight;
 
+use std::process::Command;
+
 use futures::{StreamExt, future::BoxFuture, stream};
 
 use crate::OaiRecordId;
@@ -36,6 +38,16 @@ impl IndexRunOptions {
 pub(crate) enum IndexSelectionMode {
     FailedOnly,
     PendingOnly,
+}
+
+pub(crate) fn ensure_traject_available() -> anyhow::Result<()> {
+    let status = Command::new("traject").args(["--version"]).status()?;
+
+    if !status.success() {
+        anyhow::bail!("traject failed with exit code: {:?}", status.code());
+    }
+
+    Ok(())
 }
 
 struct ProcessStats {

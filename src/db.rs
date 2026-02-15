@@ -14,21 +14,6 @@ pub async fn create_pool(database_url: &str) -> anyhow::Result<PgPool> {
     Ok(pool)
 }
 
-pub struct FetchRecordsParams<'a> {
-    pub endpoint: &'a str,
-    pub metadata_prefix: &'a str,
-    pub status: &'a str,
-    pub last_identifier: Option<&'a str>,
-}
-
-pub struct UpdateStatusParams<'a> {
-    pub endpoint: &'a str,
-    pub metadata_prefix: &'a str,
-    pub identifier: &'a str,
-    pub status: &'a str,
-    pub message: &'a str,
-}
-
 pub struct FetchIndexCandidatesParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
@@ -38,10 +23,17 @@ pub struct FetchIndexCandidatesParams<'a> {
     pub last_identifier: Option<&'a str>,
 }
 
-pub struct UpdateIndexStatusParams<'a> {
+pub struct FetchRecordsParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
-    pub identifier: &'a str,
+    pub status: &'a str,
+    pub last_identifier: Option<&'a str>,
+}
+
+pub struct ReindexStateParams<'a> {
+    pub endpoint: &'a str,
+    pub metadata_prefix: &'a str,
+    pub oai_repository: &'a str,
 }
 
 pub struct UpdateIndexFailureParams<'a> {
@@ -51,10 +43,18 @@ pub struct UpdateIndexFailureParams<'a> {
     pub message: &'a str,
 }
 
-pub struct ReindexStateParams<'a> {
+pub struct UpdateIndexStatusParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
-    pub oai_repository: &'a str,
+    pub identifier: &'a str,
+}
+
+pub struct UpdateStatusParams<'a> {
+    pub endpoint: &'a str,
+    pub metadata_prefix: &'a str,
+    pub identifier: &'a str,
+    pub status: &'a str,
+    pub message: &'a str,
 }
 
 pub async fn do_update_status_query(
