@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{
     collections::HashMap,
     env, fs,
@@ -37,6 +39,11 @@ pub struct RecordSnapshot {
     pub datestamp: String,
     pub version: i32,
     pub metadata: serde_json::Value,
+    pub index_status: String,
+    pub index_message: String,
+    pub index_attempts: i32,
+    pub indexed_at_set: bool,
+    pub purged_at_set: bool,
 }
 
 #[derive(Clone)]
@@ -61,6 +68,17 @@ pub struct MockOaiConfig {
 pub struct MockOaiServer {
     pub endpoint: String,
     handle: JoinHandle<()>,
+}
+
+pub struct MockSolrServer {
+    pub solr_url: String,
+    handle: JoinHandle<()>,
+}
+
+impl Drop for MockSolrServer {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 impl Drop for MockOaiServer {
@@ -146,6 +164,42 @@ pub async fn insert_record(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_record_with_index(
+    pool: &PgPool,
+    endpoint: &str,
+    identifier: &str,
+    datestamp: &str,
+    status: &str,
+    index_status: &str,
+    index_message: &str,
+    index_attempts: i32,
+    metadata: serde_json::Value,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO oai_records (
+            endpoint, metadata_prefix, identifier, datestamp, status, metadata,
+            index_status, index_message, index_attempts
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "#,
+    )
+    .bind(endpoint)
+    .bind(METADATA_PREFIX)
+    .bind(identifier)
+    .bind(datestamp)
+    .bind(status)
+    .bind(metadata)
+    .bind(index_status)
+    .bind(index_message)
+    .bind(index_attempts)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn fetch_fingerprint(
     pool: &PgPool,
     endpoint: &str,
@@ -174,7 +228,10 @@ pub async fn fetch_record_snapshot(
 ) -> anyhow::Result<RecordSnapshot> {
     let row = sqlx::query(
         r#"
-        SELECT status, message, datestamp, version, metadata
+        SELECT status, message, datestamp, version, metadata,
+               index_status, index_message, index_attempts,
+               indexed_at IS NOT NULL AS indexed_at_set,
+               purged_at IS NOT NULL AS purged_at_set
         FROM oai_records
         WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
         "#,
@@ -191,6 +248,11 @@ pub async fn fetch_record_snapshot(
         datestamp: row.try_get("datestamp")?,
         version: row.try_get("version")?,
         metadata: row.try_get("metadata")?,
+        index_status: row.try_get("index_status")?,
+        index_message: row.try_get("index_message")?,
+        index_attempts: row.try_get("index_attempts")?,
+        indexed_at_set: row.try_get("indexed_at_set")?,
+        purged_at_set: row.try_get("purged_at_set")?,
     })
 }
 
@@ -231,6 +293,77 @@ pub fn create_temp_file(name: &str) -> anyhow::Result<PathBuf> {
     let path = unique_path(name).with_extension("tmp");
     fs::write(&path, b"x")?;
     Ok(path)
+}
+
+pub fn create_traject_shim(name: &str) -> anyhow::Result<PathBuf> {
+    let dir = unique_path(name);
+    fs::create_dir_all(&dir)?;
+    let path = dir.join("traject");
+    fs::write(
+        &path,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "--version" ]]; then
+  echo "traject-shim 0.1"
+  exit 0
+fi
+
+mode="${TRAJECT_SHIM_MODE:-success}"
+case "$mode" in
+  success)
+    exit 0
+    ;;
+  fail)
+    echo "${TRAJECT_SHIM_MESSAGE:-shim failure}" >&2
+    exit 1
+    ;;
+  sleep)
+    sleep "${TRAJECT_SHIM_SLEEP_SECONDS:-1}"
+    exit 0
+    ;;
+  *)
+    echo "unknown traject shim mode: ${mode}" >&2
+    exit 2
+    ;;
+esac
+"#,
+    )?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+    }
+
+    Ok(path)
+}
+
+pub async fn start_mock_solr_server(
+    status_code: u16,
+    body: &str,
+) -> anyhow::Result<MockSolrServer> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let solr_url = format!("http://{}/solr/arclight", address);
+    let body = body.to_string();
+
+    let handle = tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = match listener.accept().await {
+                Ok(value) => value,
+                Err(_) => break,
+            };
+            let body = body.clone();
+            tokio::spawn(async move {
+                if let Err(error) = handle_solr_connection(&mut socket, status_code, &body).await {
+                    eprintln!("mock Solr request handling failed: {}", error);
+                }
+            });
+        }
+    });
+
+    Ok(MockSolrServer { solr_url, handle })
 }
 
 pub async fn start_mock_oai_server(config: MockOaiConfig) -> anyhow::Result<MockOaiServer> {
@@ -337,6 +470,41 @@ async fn handle_connection(
     let body = build_oai_response(endpoint, config, &params);
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    socket.write_all(response.as_bytes()).await?;
+    Ok(())
+}
+
+async fn handle_solr_connection(
+    socket: &mut TcpStream,
+    status_code: u16,
+    body: &str,
+) -> anyhow::Result<()> {
+    let mut buf = vec![0u8; 8192];
+    let mut total = 0usize;
+
+    loop {
+        let bytes_read = socket.read(&mut buf[total..]).await?;
+        if bytes_read == 0 {
+            return Ok(());
+        }
+        total += bytes_read;
+        if buf[..total].windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+        if total == buf.len() {
+            break;
+        }
+    }
+
+    let status_text = if status_code == 200 { "OK" } else { "ERROR" };
+    let response = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status_code,
+        status_text,
         body.len(),
         body
     );
