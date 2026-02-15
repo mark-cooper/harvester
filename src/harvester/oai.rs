@@ -58,7 +58,6 @@ pub enum OaiRecordStatus {
     Available,
     Deleted,
     Failed,
-    Indexed,
     Parsed,
     Pending,
 }
@@ -69,7 +68,6 @@ impl OaiRecordStatus {
             OaiRecordStatus::Available => "available",
             OaiRecordStatus::Deleted => "deleted",
             OaiRecordStatus::Failed => "failed",
-            OaiRecordStatus::Indexed => "indexed",
             OaiRecordStatus::Parsed => "parsed",
             OaiRecordStatus::Pending => "pending",
         }
@@ -79,5 +77,25 @@ impl OaiRecordStatus {
 impl std::fmt::Display for OaiRecordStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+pub enum OaiIndexStatus {
+    IndexFailed,
+    Indexed,
+    Pending,
+    Purged,
+    PurgeFailed,
+}
+
+impl OaiIndexStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OaiIndexStatus::IndexFailed => "index_failed",
+            OaiIndexStatus::Indexed => "indexed",
+            OaiIndexStatus::Pending => "pending",
+            OaiIndexStatus::Purged => "purged",
+            OaiIndexStatus::PurgeFailed => "purge_failed",
+        }
     }
 }

@@ -72,6 +72,22 @@ async fn batch_upsert_records(
             datestamp = EXCLUDED.datestamp,
             status = EXCLUDED.status,
             message = '',
+            index_status = CASE
+                WHEN EXCLUDED.status = 'deleted' THEN 'pending'
+                ELSE oai_records.index_status
+            END,
+            index_message = CASE
+                WHEN EXCLUDED.status = 'deleted' THEN ''
+                ELSE oai_records.index_message
+            END,
+            purged_at = CASE
+                WHEN EXCLUDED.status = 'deleted' THEN NULL
+                ELSE oai_records.purged_at
+            END,
+            index_last_checked_at = CASE
+                WHEN EXCLUDED.status = 'deleted' THEN NULL
+                ELSE oai_records.index_last_checked_at
+            END,
             version = oai_records.version + 1,
             last_checked_at = EXCLUDED.last_checked_at
         WHERE oai_records.status != $7

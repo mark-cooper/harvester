@@ -211,18 +211,26 @@ async fn update_record_metadata(
     identifier: &str,
     metadata: serde_json::Value,
 ) -> anyhow::Result<()> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         UPDATE oai_records
-        SET status = $4, metadata = $5, last_checked_at = NOW()
+        SET status = $4,
+            metadata = $5,
+            index_status = $6,
+            index_message = '',
+            indexed_at = NULL,
+            purged_at = NULL,
+            index_last_checked_at = NULL,
+            last_checked_at = NOW()
         WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
         "#,
-        &harvester.config.endpoint,
-        &harvester.config.metadata_prefix,
-        identifier,
-        OaiRecordStatus::Parsed.as_str(),
-        metadata
     )
+    .bind(&harvester.config.endpoint)
+    .bind(&harvester.config.metadata_prefix)
+    .bind(identifier)
+    .bind(OaiRecordStatus::Parsed.as_str())
+    .bind(metadata)
+    .bind(crate::harvester::oai::OaiIndexStatus::Pending.as_str())
     .execute(&harvester.pool)
     .await?;
     Ok(())

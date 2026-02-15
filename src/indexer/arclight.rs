@@ -7,8 +7,11 @@ use tokio::process::Command;
 
 use crate::{
     OaiRecordId,
-    db::{UpdateStatusParams, do_update_status_query},
-    harvester::oai::OaiRecordStatus,
+    db::{
+        FetchIndexCandidatesParams, UpdateIndexFailureParams, UpdateIndexStatusParams,
+        do_mark_index_failure_query, do_mark_index_success_query, fetch_records_for_indexing,
+        fetch_records_for_purging,
+    },
     indexer::{self, Indexer, truncate_middle},
 };
 
@@ -60,58 +63,33 @@ impl ArcLightIndexer {
 }
 
 impl Indexer for ArcLightIndexer {
-    fn fetch_records<'a>(
+    fn fetch_records_to_index<'a>(
         &'a self,
-        status: &'a str,
         last_identifier: Option<&'a str>,
     ) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>> {
         Box::pin(async move {
-            Ok(match last_identifier {
-                Some(last_id) => {
-                    sqlx::query_as!(
-                        OaiRecordId,
-                        r#"
-                        SELECT identifier, fingerprint AS "fingerprint!"
-                        FROM oai_records
-                        WHERE endpoint = $1
-                          AND metadata_prefix = $2
-                          AND status = $3
-                          AND identifier > $4
-                          AND metadata->'repository' ? $5
-                        ORDER BY identifier
-                        LIMIT 100
-                        "#,
-                        &self.config.oai_endpoint,
-                        &self.config.metadata_prefix,
-                        status,
-                        last_id,
-                        &self.config.oai_repository,
-                    )
-                    .fetch_all(&self.pool)
-                    .await?
-                }
-                None => {
-                    sqlx::query_as!(
-                        OaiRecordId,
-                        r#"
-                        SELECT identifier, fingerprint AS "fingerprint!"
-                        FROM oai_records
-                        WHERE endpoint = $1
-                          AND metadata_prefix = $2
-                          AND status = $3
-                          AND metadata->'repository' ? $4
-                        ORDER BY identifier
-                        LIMIT 100
-                        "#,
-                        &self.config.oai_endpoint,
-                        &self.config.metadata_prefix,
-                        status,
-                        &self.config.oai_repository,
-                    )
-                    .fetch_all(&self.pool)
-                    .await?
-                }
-            })
+            let params = FetchIndexCandidatesParams {
+                endpoint: &self.config.oai_endpoint,
+                metadata_prefix: &self.config.metadata_prefix,
+                oai_repository: &self.config.oai_repository,
+                last_identifier,
+            };
+            Ok(fetch_records_for_indexing(&self.pool, params).await?)
+        })
+    }
+
+    fn fetch_records_to_purge<'a>(
+        &'a self,
+        last_identifier: Option<&'a str>,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>> {
+        Box::pin(async move {
+            let params = FetchIndexCandidatesParams {
+                endpoint: &self.config.oai_endpoint,
+                metadata_prefix: &self.config.metadata_prefix,
+                oai_repository: &self.config.oai_repository,
+                last_identifier,
+            };
+            Ok(fetch_records_for_purging(&self.pool, params).await?)
         })
     }
 
@@ -140,22 +118,23 @@ impl Indexer for ArcLightIndexer {
                 .output()
                 .await?;
 
-            let mut params = UpdateStatusParams {
-                endpoint: &self.config.oai_endpoint,
-                metadata_prefix: &self.config.metadata_prefix,
-                identifier: &record.identifier,
-                status: OaiRecordStatus::Indexed.as_str(),
-                message: "",
-            };
-
             if output.status.success() {
-                do_update_status_query(&self.pool, params).await?;
+                let params = UpdateIndexStatusParams {
+                    endpoint: &self.config.oai_endpoint,
+                    metadata_prefix: &self.config.metadata_prefix,
+                    identifier: &record.identifier,
+                };
+                do_mark_index_success_query(&self.pool, params).await?;
                 Ok(())
             } else {
                 let stderr = truncate_middle(&String::from_utf8_lossy(&output.stderr), 200, 200);
-                params.status = OaiRecordStatus::Failed.as_str();
-                params.message = &stderr;
-                do_update_status_query(&self.pool, params).await?;
+                let params = UpdateIndexFailureParams {
+                    endpoint: &self.config.oai_endpoint,
+                    metadata_prefix: &self.config.metadata_prefix,
+                    identifier: &record.identifier,
+                    message: &stderr,
+                };
+                do_mark_index_failure_query(&self.pool, params).await?;
                 anyhow::bail!("traject failed: {}", stderr);
             }
         })

@@ -53,3 +53,10 @@ repository,repository/corpname,required
 - col 1 is used as a json attribute key for grouping values
 - col 2 identifies a path in the oai xml to scan for values
 - col 3 can be empty or "required", with the latter enforcing an error if a value is not found
+
+## DB reset
+
+```bash
+PGHOST=localhost PGUSER=admin PGPASSWORD=admin psql \
+    -c "TRUNCATE TABLE oai_records;" -d harvester
+```

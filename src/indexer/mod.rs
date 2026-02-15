@@ -2,15 +2,18 @@ pub mod arclight;
 
 use futures::{StreamExt, future::BoxFuture, stream};
 
-use crate::harvester::oai::{OaiRecordId, OaiRecordStatus};
+use crate::harvester::oai::OaiRecordId;
 
 const BATCH_SIZE: usize = 100;
 const CONCURRENCY: usize = 10;
 
 pub trait Indexer: Sync {
-    fn fetch_records<'a>(
+    fn fetch_records_to_index<'a>(
         &'a self,
-        status: &'a str,
+        last_identifier: Option<&'a str>,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>>;
+    fn fetch_records_to_purge<'a>(
+        &'a self,
         last_identifier: Option<&'a str>,
     ) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>>;
     fn index_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
@@ -19,9 +22,9 @@ pub trait Indexer: Sync {
 
 pub async fn run<T: Indexer>(indexer: &T) -> anyhow::Result<()> {
     let total_indexed =
-        process_records(indexer, OaiRecordStatus::Parsed.as_str(), T::index_record).await?;
+        process_records(indexer, T::fetch_records_to_index, T::index_record).await?;
     let total_deleted =
-        process_records(indexer, OaiRecordStatus::Deleted.as_str(), T::delete_record).await?;
+        process_records(indexer, T::fetch_records_to_purge, T::delete_record).await?;
 
     println!("Indexed records: {}", total_indexed);
     println!("Deleted records: {}", total_deleted);
@@ -30,16 +33,14 @@ pub async fn run<T: Indexer>(indexer: &T) -> anyhow::Result<()> {
 
 async fn process_records<T: Indexer>(
     indexer: &T,
-    status: &str,
+    fetch: for<'a> fn(&'a T, Option<&'a str>) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>>,
     action: for<'a> fn(&'a T, &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>,
 ) -> anyhow::Result<usize> {
     let mut last_identifier: Option<String> = None;
     let mut total = 0usize;
 
     loop {
-        let batch = indexer
-            .fetch_records(status, last_identifier.as_deref())
-            .await?;
+        let batch = fetch(indexer, last_identifier.as_deref()).await?;
         if batch.is_empty() {
             break;
         }
