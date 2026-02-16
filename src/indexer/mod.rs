@@ -24,9 +24,7 @@ pub struct IndexerContext {
     endpoint: String,
     metadata_prefix: String,
     oai_repository: String,
-    selection_mode: IndexSelectionMode,
-    message_filter: Option<String>,
-    max_attempts: Option<i32>,
+    run_options: IndexRunOptions,
     preview: bool,
 }
 
@@ -44,9 +42,7 @@ impl IndexerContext {
             endpoint,
             metadata_prefix,
             oai_repository,
-            selection_mode: run_options.selection_mode,
-            message_filter: run_options.message_filter,
-            max_attempts: run_options.max_attempts,
+            run_options,
             preview,
         }
     }
@@ -134,12 +130,12 @@ async fn fetch_batch(
         endpoint: &ctx.endpoint,
         metadata_prefix: &ctx.metadata_prefix,
         oai_repository: &ctx.oai_repository,
-        max_attempts: ctx.max_attempts,
-        message_filter: ctx.message_filter.as_deref(),
+        max_attempts: ctx.run_options.max_attempts,
+        message_filter: ctx.run_options.message_filter.as_deref(),
         last_identifier,
     };
 
-    Ok(match (phase, ctx.selection_mode) {
+    Ok(match (phase, ctx.run_options.selection_mode) {
         (RecordPhase::Index, IndexSelectionMode::PendingOnly) => {
             fetch_pending_records_for_indexing(&ctx.pool, params).await?
         }
