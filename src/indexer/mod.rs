@@ -3,11 +3,54 @@ pub mod arclight;
 use std::process::Command;
 
 use futures::{StreamExt, future::BoxFuture, stream};
+use sqlx::PgPool;
 
-use crate::OaiRecordId;
+use crate::{
+    OaiRecordId,
+    db::{
+        FetchIndexCandidatesParams, UpdateIndexFailureParams, UpdateIndexStatusParams,
+        do_mark_index_failure_query, do_mark_index_success_query, do_mark_purge_failure_query,
+        do_mark_purge_success_query, fetch_failed_records_for_indexing,
+        fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
+        fetch_pending_records_for_purging,
+    },
+};
 
 const BATCH_SIZE: usize = 100;
 const CONCURRENCY: usize = 10;
+
+pub struct IndexerContext {
+    pool: PgPool,
+    endpoint: String,
+    metadata_prefix: String,
+    oai_repository: String,
+    selection_mode: IndexSelectionMode,
+    message_filter: Option<String>,
+    max_attempts: Option<i32>,
+    preview: bool,
+}
+
+impl IndexerContext {
+    pub fn new(
+        pool: PgPool,
+        endpoint: String,
+        metadata_prefix: String,
+        oai_repository: String,
+        run_options: IndexRunOptions,
+        preview: bool,
+    ) -> Self {
+        Self {
+            pool,
+            endpoint,
+            metadata_prefix,
+            oai_repository,
+            selection_mode: run_options.selection_mode,
+            message_filter: run_options.message_filter,
+            max_attempts: run_options.max_attempts,
+            preview,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct IndexRunOptions {
@@ -40,6 +83,16 @@ pub(crate) enum IndexSelectionMode {
     PendingOnly,
 }
 
+struct ProcessStats {
+    succeeded: usize,
+    failed: usize,
+}
+
+enum RecordPhase {
+    Index,
+    Purge,
+}
+
 pub(crate) fn ensure_traject_available() -> anyhow::Result<()> {
     let status = Command::new("traject").args(["--version"]).status()?;
 
@@ -50,31 +103,14 @@ pub(crate) fn ensure_traject_available() -> anyhow::Result<()> {
     Ok(())
 }
 
-struct ProcessStats {
-    succeeded: usize,
-    failed: usize,
-}
-
-type FetchFn<T> =
-    for<'a> fn(&'a T, Option<&'a str>) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>>;
-type ActionFn<T> = for<'a> fn(&'a T, &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
-
 pub trait Indexer: Sync {
-    fn fetch_records_to_index<'a>(
-        &'a self,
-        last_identifier: Option<&'a str>,
-    ) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>>;
-    fn fetch_records_to_purge<'a>(
-        &'a self,
-        last_identifier: Option<&'a str>,
-    ) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>>;
     fn index_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
     fn delete_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
-pub async fn run<T: Indexer>(indexer: &T) -> anyhow::Result<()> {
-    let indexed = process_records(indexer, T::fetch_records_to_index, T::index_record).await?;
-    let deleted = process_records(indexer, T::fetch_records_to_purge, T::delete_record).await?;
+pub async fn run<T: Indexer>(ctx: &IndexerContext, indexer: &T) -> anyhow::Result<()> {
+    let indexed = process_records(ctx, indexer, RecordPhase::Index).await?;
+    let deleted = process_records(ctx, indexer, RecordPhase::Purge).await?;
 
     println!("Indexed records: {}", indexed.succeeded);
     println!("Deleted records: {}", deleted.succeeded);
@@ -89,35 +125,136 @@ pub async fn run<T: Indexer>(indexer: &T) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn fetch_batch(
+    ctx: &IndexerContext,
+    phase: &RecordPhase,
+    last_identifier: Option<&str>,
+) -> anyhow::Result<Vec<OaiRecordId>> {
+    let params = FetchIndexCandidatesParams {
+        endpoint: &ctx.endpoint,
+        metadata_prefix: &ctx.metadata_prefix,
+        oai_repository: &ctx.oai_repository,
+        max_attempts: ctx.max_attempts,
+        message_filter: ctx.message_filter.as_deref(),
+        last_identifier,
+    };
+
+    Ok(match (phase, ctx.selection_mode) {
+        (RecordPhase::Index, IndexSelectionMode::PendingOnly) => {
+            fetch_pending_records_for_indexing(&ctx.pool, params).await?
+        }
+        (RecordPhase::Index, IndexSelectionMode::FailedOnly) => {
+            fetch_failed_records_for_indexing(&ctx.pool, params).await?
+        }
+        (RecordPhase::Purge, IndexSelectionMode::PendingOnly) => {
+            fetch_pending_records_for_purging(&ctx.pool, params).await?
+        }
+        (RecordPhase::Purge, IndexSelectionMode::FailedOnly) => {
+            fetch_failed_records_for_purging(&ctx.pool, params).await?
+        }
+    })
+}
+
+async fn mark_success(
+    ctx: &IndexerContext,
+    phase: &RecordPhase,
+    record: &OaiRecordId,
+) -> anyhow::Result<()> {
+    let params = UpdateIndexStatusParams {
+        endpoint: &ctx.endpoint,
+        metadata_prefix: &ctx.metadata_prefix,
+        identifier: &record.identifier,
+    };
+
+    match phase {
+        RecordPhase::Index => do_mark_index_success_query(&ctx.pool, params).await?,
+        RecordPhase::Purge => do_mark_purge_success_query(&ctx.pool, params).await?,
+    };
+
+    Ok(())
+}
+
+async fn mark_failure(
+    ctx: &IndexerContext,
+    phase: &RecordPhase,
+    record: &OaiRecordId,
+    message: &str,
+) -> anyhow::Result<()> {
+    let params = UpdateIndexFailureParams {
+        endpoint: &ctx.endpoint,
+        metadata_prefix: &ctx.metadata_prefix,
+        identifier: &record.identifier,
+        message,
+    };
+
+    match phase {
+        RecordPhase::Index => do_mark_index_failure_query(&ctx.pool, params).await?,
+        RecordPhase::Purge => do_mark_purge_failure_query(&ctx.pool, params).await?,
+    };
+
+    Ok(())
+}
+
 async fn process_records<T: Indexer>(
+    ctx: &IndexerContext,
     indexer: &T,
-    fetch: FetchFn<T>,
-    action: ActionFn<T>,
+    phase: RecordPhase,
 ) -> anyhow::Result<ProcessStats> {
     let mut last_identifier: Option<String> = None;
     let mut succeeded = 0usize;
     let mut failed = 0usize;
 
     loop {
-        let batch = fetch(indexer, last_identifier.as_deref()).await?;
+        let batch = fetch_batch(ctx, &phase, last_identifier.as_deref()).await?;
         if batch.is_empty() {
             break;
         }
 
         last_identifier = batch.last().map(|r| r.identifier.clone());
 
-        let results: Vec<_> = stream::iter(&batch)
-            .map(|record| action(indexer, record))
-            .buffer_unordered(CONCURRENCY)
-            .collect()
-            .await;
+        if ctx.preview {
+            for record in &batch {
+                let label = match phase {
+                    RecordPhase::Index => "index",
+                    RecordPhase::Purge => "delete",
+                };
+                println!("Would {} record: {}", label, record.identifier);
+            }
+            succeeded += batch.len();
+        } else {
+            let results: Vec<_> = stream::iter(&batch)
+                .map(|record| {
+                    let fut = match phase {
+                        RecordPhase::Index => indexer.index_record(record),
+                        RecordPhase::Purge => indexer.delete_record(record),
+                    };
+                    async move { (record, fut.await) }
+                })
+                .buffer_unordered(CONCURRENCY)
+                .collect()
+                .await;
 
-        for result in results {
-            match result {
-                Ok(()) => succeeded += 1,
-                Err(e) => {
-                    failed += 1;
-                    eprintln!("Failed to process: {}", e);
+            for (record, result) in results {
+                match result {
+                    Ok(()) => {
+                        if let Err(e) = mark_success(ctx, &phase, record).await {
+                            failed += 1;
+                            eprintln!("Failed to mark success for {}: {}", record.identifier, e);
+                        } else {
+                            succeeded += 1;
+                        }
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        let message = truncate_middle(&e.to_string(), 200, 200);
+                        eprintln!("Failed to process: {}", message);
+                        if let Err(db_err) = mark_failure(ctx, &phase, record, &message).await {
+                            eprintln!(
+                                "Failed to mark failure for {}: {}",
+                                record.identifier, db_err
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -146,143 +283,4 @@ fn truncate_middle(s: &str, head: usize, tail: usize) -> String {
         total - head - tail,
         &s[tail_start..],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{
-        collections::HashSet,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-    };
-
-    use tokio::sync::Mutex;
-
-    use super::*;
-
-    struct MockIndexer {
-        index_batches: Mutex<Vec<Vec<OaiRecordId>>>,
-        purge_batches: Mutex<Vec<Vec<OaiRecordId>>>,
-        fail_index_ids: HashSet<String>,
-        fail_purge_ids: HashSet<String>,
-        index_calls: Arc<AtomicUsize>,
-        purge_calls: Arc<AtomicUsize>,
-    }
-
-    impl MockIndexer {
-        fn new(
-            index_batches: Vec<Vec<OaiRecordId>>,
-            purge_batches: Vec<Vec<OaiRecordId>>,
-            fail_index_ids: HashSet<String>,
-            fail_purge_ids: HashSet<String>,
-        ) -> Self {
-            Self {
-                index_batches: Mutex::new(index_batches),
-                purge_batches: Mutex::new(purge_batches),
-                fail_index_ids,
-                fail_purge_ids,
-                index_calls: Arc::new(AtomicUsize::new(0)),
-                purge_calls: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-
-        fn record(identifier: &str) -> OaiRecordId {
-            OaiRecordId {
-                identifier: identifier.to_string(),
-                fingerprint: identifier.to_string(),
-            }
-        }
-    }
-
-    impl Indexer for MockIndexer {
-        fn fetch_records_to_index<'a>(
-            &'a self,
-            _last_identifier: Option<&'a str>,
-        ) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>> {
-            Box::pin(async move {
-                let mut guard = self.index_batches.lock().await;
-                Ok(if guard.is_empty() {
-                    vec![]
-                } else {
-                    guard.remove(0)
-                })
-            })
-        }
-
-        fn fetch_records_to_purge<'a>(
-            &'a self,
-            _last_identifier: Option<&'a str>,
-        ) -> BoxFuture<'a, anyhow::Result<Vec<OaiRecordId>>> {
-            Box::pin(async move {
-                let mut guard = self.purge_batches.lock().await;
-                Ok(if guard.is_empty() {
-                    vec![]
-                } else {
-                    guard.remove(0)
-                })
-            })
-        }
-
-        fn index_record<'a>(
-            &'a self,
-            record: &'a OaiRecordId,
-        ) -> BoxFuture<'a, anyhow::Result<()>> {
-            Box::pin(async move {
-                self.index_calls.fetch_add(1, Ordering::SeqCst);
-                if self.fail_index_ids.contains(&record.identifier) {
-                    anyhow::bail!("index failed for {}", record.identifier);
-                }
-                Ok(())
-            })
-        }
-
-        fn delete_record<'a>(
-            &'a self,
-            record: &'a OaiRecordId,
-        ) -> BoxFuture<'a, anyhow::Result<()>> {
-            Box::pin(async move {
-                self.purge_calls.fetch_add(1, Ordering::SeqCst);
-                if self.fail_purge_ids.contains(&record.identifier) {
-                    anyhow::bail!("delete failed for {}", record.identifier);
-                }
-                Ok(())
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn run_fails_when_any_record_fails_but_continues_processing() {
-        let indexer = MockIndexer::new(
-            vec![vec![MockIndexer::record("a"), MockIndexer::record("b")]],
-            vec![vec![MockIndexer::record("c")]],
-            HashSet::from([String::from("b")]),
-            HashSet::new(),
-        );
-
-        let result = run(&indexer).await;
-
-        assert!(result.is_err());
-        let message = result.unwrap_err().to_string();
-        assert!(message.contains("1 failed record"));
-        assert_eq!(indexer.index_calls.load(Ordering::SeqCst), 2);
-        assert_eq!(indexer.purge_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn run_succeeds_when_all_records_succeed() {
-        let indexer = MockIndexer::new(
-            vec![vec![MockIndexer::record("a")]],
-            vec![vec![MockIndexer::record("b")]],
-            HashSet::new(),
-            HashSet::new(),
-        );
-
-        let result = run(&indexer).await;
-
-        assert!(result.is_ok());
-        assert_eq!(indexer.index_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(indexer.purge_calls.load(Ordering::SeqCst), 1);
-    }
 }

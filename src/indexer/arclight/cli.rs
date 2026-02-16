@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::Args;
 
+use super::config::ARCLIGHT_METADATA_PREFIX;
+
 #[derive(Debug, Args)]
 pub struct ArcLightArgs {
     /// Target repository id
@@ -51,7 +53,7 @@ pub struct ArcLightReindexArgs {
     pub oai_repository: String,
 
     /// OAI metadata prefix
-    #[arg(short, long, default_value = "oai_ead")]
+    #[arg(short, long, default_value = ARCLIGHT_METADATA_PREFIX)]
     pub metadata_prefix: String,
 }
 

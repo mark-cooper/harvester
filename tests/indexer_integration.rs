@@ -3,11 +3,13 @@ mod support;
 use std::{env, path::Path};
 
 use harvester::{
-    ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput, IndexRunOptions,
+    ARCLIGHT_METADATA_PREFIX, ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
+    IndexRunOptions, IndexerContext, run_indexer,
 };
 use support::{
     DEFAULT_DATESTAMP, acquire_test_lock, create_temp_dir, create_temp_file, create_traject_shim,
-    fetch_record_snapshot, insert_record_with_index, setup_test_pool, start_mock_solr_server,
+    fetch_fingerprint, fetch_record_snapshot, insert_record_with_index, setup_test_pool,
+    start_mock_solr_server,
 };
 
 const ENDPOINT: &str = "https://indexer.example.org/oai";
@@ -57,22 +59,31 @@ fn build_config(
     data_dir: std::path::PathBuf,
     repository_file: std::path::PathBuf,
     solr_url: String,
-    preview: bool,
-    run_options: IndexRunOptions,
 ) -> ArcLightIndexerConfig {
     ArcLightIndexerConfig::new(ArcLightIndexerConfigInput {
         configuration,
         dir: data_dir,
         repository: REPOSITORY_ID.to_string(),
-        oai_endpoint: ENDPOINT.to_string(),
-        oai_repository: REPOSITORY.to_string(),
-        preview,
         repository_file,
         record_timeout_seconds: 5,
         solr_url,
         solr_commit_within_ms: 1000,
-        run_options,
     })
+}
+
+fn build_context(
+    pool: sqlx::PgPool,
+    run_options: IndexRunOptions,
+    preview: bool,
+) -> IndexerContext {
+    IndexerContext::new(
+        pool,
+        ENDPOINT.to_string(),
+        ARCLIGHT_METADATA_PREFIX.to_string(),
+        REPOSITORY.to_string(),
+        run_options,
+        preview,
+    )
 }
 
 #[tokio::test]
@@ -100,16 +111,15 @@ async fn index_success_marks_record_indexed() -> anyhow::Result<()> {
     let _path_guard = prepend_path(shim.parent().unwrap());
     let _mode_guard = EnvVarGuard::set("TRAJECT_SHIM_MODE", "success".to_string());
 
+    let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
     let config = build_config(
         configuration,
         data_dir,
         repository_file,
         "http://127.0.0.1:65535/solr/arclight".to_string(),
-        false,
-        IndexRunOptions::pending_only(),
     );
-    let indexer = ArcLightIndexer::new(config, pool.clone());
-    indexer.run().await?;
+    let indexer = ArcLightIndexer::new(config);
+    run_indexer(&ctx, &indexer).await?;
 
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "index-success").await?;
     assert_eq!(snapshot.status, "parsed");
@@ -149,16 +159,15 @@ async fn index_failure_marks_record_index_failed() -> anyhow::Result<()> {
     let _message_guard =
         EnvVarGuard::set("TRAJECT_SHIM_MESSAGE", "shim traject failure".to_string());
 
+    let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
     let config = build_config(
         configuration,
         data_dir,
         repository_file,
         "http://127.0.0.1:65535/solr/arclight".to_string(),
-        false,
-        IndexRunOptions::pending_only(),
     );
-    let indexer = ArcLightIndexer::new(config, pool.clone());
-    let result = indexer.run().await;
+    let indexer = ArcLightIndexer::new(config);
+    let result = run_indexer(&ctx, &indexer).await;
     assert!(result.is_err());
 
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "index-failure").await?;
@@ -167,6 +176,75 @@ async fn index_failure_marks_record_index_failed() -> anyhow::Result<()> {
     assert_eq!(snapshot.index_attempts, 1);
     assert!(snapshot.index_message.contains("shim traject failure"));
     assert!(!snapshot.indexed_at_set);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn index_batch_mixed_results_continue_processing_remaining_records() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "index-mixed-success",
+        DEFAULT_DATESTAMP,
+        "parsed",
+        "pending",
+        "",
+        0,
+        metadata(),
+    )
+    .await?;
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "index-mixed-failure",
+        DEFAULT_DATESTAMP,
+        "parsed",
+        "pending",
+        "",
+        0,
+        metadata(),
+    )
+    .await?;
+
+    let failure_fingerprint = fetch_fingerprint(&pool, ENDPOINT, "index-mixed-failure").await?;
+    let configuration = create_temp_file("index-mixed-config")?;
+    let data_dir = create_temp_dir("index-mixed-data")?;
+    let repository_file = create_temp_file("index-mixed-repo-file")?;
+    let shim = create_traject_shim("index-mixed-traject")?;
+    let _path_guard = prepend_path(shim.parent().unwrap());
+    let _mode_guard = EnvVarGuard::set("TRAJECT_SHIM_MODE", "fail_on_id".to_string());
+    let _failure_guard = EnvVarGuard::set("TRAJECT_SHIM_FAIL_ID", failure_fingerprint);
+    let _message_guard =
+        EnvVarGuard::set("TRAJECT_SHIM_MESSAGE", "shim targeted failure".to_string());
+
+    let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
+    let config = build_config(
+        configuration,
+        data_dir,
+        repository_file,
+        "http://127.0.0.1:65535/solr/arclight".to_string(),
+    );
+    let indexer = ArcLightIndexer::new(config);
+    let result = run_indexer(&ctx, &indexer).await;
+    assert!(result.is_err());
+    let message = result.unwrap_err().to_string();
+    assert!(message.contains("1 failed record(s)"));
+
+    let success = fetch_record_snapshot(&pool, ENDPOINT, "index-mixed-success").await?;
+    assert_eq!(success.index_status, "indexed");
+    assert_eq!(success.index_attempts, 0);
+    assert_eq!(success.index_message, "");
+    assert!(success.indexed_at_set);
+
+    let failed = fetch_record_snapshot(&pool, ENDPOINT, "index-mixed-failure").await?;
+    assert_eq!(failed.index_status, "index_failed");
+    assert_eq!(failed.index_attempts, 1);
+    assert!(failed.index_message.contains("shim targeted failure"));
+    assert!(!failed.indexed_at_set);
 
     Ok(())
 }
@@ -194,16 +272,15 @@ async fn delete_success_marks_record_purged() -> anyhow::Result<()> {
     let data_dir = create_temp_dir("delete-success-data")?;
     let repository_file = create_temp_file("delete-success-repo-file")?;
 
+    let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
     let config = build_config(
         configuration,
         data_dir,
         repository_file,
         solr.solr_url.clone(),
-        false,
-        IndexRunOptions::pending_only(),
     );
-    let indexer = ArcLightIndexer::new(config, pool.clone());
-    indexer.run().await?;
+    let indexer = ArcLightIndexer::new(config);
+    run_indexer(&ctx, &indexer).await?;
 
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "delete-success").await?;
     assert_eq!(snapshot.status, "deleted");
@@ -237,16 +314,15 @@ async fn delete_failure_marks_record_purge_failed() -> anyhow::Result<()> {
     let data_dir = create_temp_dir("delete-failure-data")?;
     let repository_file = create_temp_file("delete-failure-repo-file")?;
 
+    let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
     let config = build_config(
         configuration,
         data_dir,
         repository_file,
         solr.solr_url.clone(),
-        false,
-        IndexRunOptions::pending_only(),
     );
-    let indexer = ArcLightIndexer::new(config, pool.clone());
-    let result = indexer.run().await;
+    let indexer = ArcLightIndexer::new(config);
+    let result = run_indexer(&ctx, &indexer).await;
     assert!(result.is_err());
 
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "delete-failure").await?;
@@ -255,6 +331,69 @@ async fn delete_failure_marks_record_purge_failed() -> anyhow::Result<()> {
     assert_eq!(snapshot.index_attempts, 1);
     assert!(snapshot.index_message.contains("500"));
     assert!(!snapshot.purged_at_set);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_batch_failures_continue_processing_remaining_records() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "delete-batch-fail-a",
+        DEFAULT_DATESTAMP,
+        "deleted",
+        "pending",
+        "",
+        0,
+        metadata(),
+    )
+    .await?;
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "delete-batch-fail-b",
+        DEFAULT_DATESTAMP,
+        "deleted",
+        "pending",
+        "",
+        0,
+        metadata(),
+    )
+    .await?;
+
+    let solr = start_mock_solr_server(500, r#"{"error":"boom"}"#).await?;
+    let configuration = create_temp_file("delete-batch-fail-config")?;
+    let data_dir = create_temp_dir("delete-batch-fail-data")?;
+    let repository_file = create_temp_file("delete-batch-fail-repo-file")?;
+
+    let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
+    let config = build_config(
+        configuration,
+        data_dir,
+        repository_file,
+        solr.solr_url.clone(),
+    );
+    let indexer = ArcLightIndexer::new(config);
+    let result = run_indexer(&ctx, &indexer).await;
+    assert!(result.is_err());
+    let message = result.unwrap_err().to_string();
+    assert!(message.contains("2 failed record(s)"));
+
+    let first = fetch_record_snapshot(&pool, ENDPOINT, "delete-batch-fail-a").await?;
+    assert_eq!(first.index_status, "purge_failed");
+    assert_eq!(first.index_attempts, 1);
+    assert!(first.index_message.contains("500"));
+    assert!(!first.purged_at_set);
+
+    let second = fetch_record_snapshot(&pool, ENDPOINT, "delete-batch-fail-b").await?;
+    assert_eq!(second.index_status, "purge_failed");
+    assert_eq!(second.index_attempts, 1);
+    assert!(second.index_message.contains("500"));
+    assert!(!second.purged_at_set);
 
     Ok(())
 }
@@ -293,16 +432,15 @@ async fn preview_mode_has_no_side_effects() -> anyhow::Result<()> {
     let data_dir = create_temp_dir("preview-data")?;
     let repository_file = create_temp_file("preview-repo-file")?;
 
+    let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), true);
     let config = build_config(
         configuration,
         data_dir,
         repository_file,
         "http://127.0.0.1:65535/solr/arclight".to_string(),
-        true,
-        IndexRunOptions::pending_only(),
     );
-    let indexer = ArcLightIndexer::new(config, pool.clone());
-    indexer.run().await?;
+    let indexer = ArcLightIndexer::new(config);
+    run_indexer(&ctx, &indexer).await?;
 
     let indexed = fetch_record_snapshot(&pool, ENDPOINT, "preview-index").await?;
     assert_eq!(indexed.index_status, "pending");

@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::Context;
-use harvester::{Harvester, OaiConfig};
+use harvester::{ARCLIGHT_METADATA_PREFIX, Harvester, OaiConfig};
 use sqlx::{
     PgPool, Row,
     migrate::Migrator,
@@ -24,7 +24,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-pub const METADATA_PREFIX: &str = "oai_ead";
+pub const METADATA_PREFIX: &str = ARCLIGHT_METADATA_PREFIX;
 pub const DEFAULT_DATESTAMP: &str = "2026-02-07";
 pub const EAD_XML: &str = r#"<ead xmlns="urn:isbn:1-931666-22-9"><archdesc><did><repository><corpname>Integration Repository</corpname></repository><unittitle>Integration Title</unittitle><unitid>ID-INT-001</unitid></did></archdesc></ead>"#;
 const RULES_CSV: &str =
@@ -317,6 +317,19 @@ case "$mode" in
   fail)
     echo "${TRAJECT_SHIM_MESSAGE:-shim failure}" >&2
     exit 1
+    ;;
+  fail_on_id)
+    target_id=""
+    for arg in "$@"; do
+      if [[ "$arg" == id=* ]]; then
+        target_id="${arg#id=}"
+      fi
+    done
+    if [[ -n "${TRAJECT_SHIM_FAIL_ID:-}" && "$target_id" == "${TRAJECT_SHIM_FAIL_ID}" ]]; then
+      echo "${TRAJECT_SHIM_MESSAGE:-shim failure}" >&2
+      exit 1
+    fi
+    exit 0
     ;;
   sleep)
     sleep "${TRAJECT_SHIM_SLEEP_SECONDS:-1}"

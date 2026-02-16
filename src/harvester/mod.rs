@@ -63,8 +63,6 @@ impl Harvester {
             self.metadata(rules).await?;
         }
 
-        // TODO: generate a summary of the ead xml content
-        // self.summarize().await?;
         Ok(())
     }
 }
