@@ -8,16 +8,6 @@ pub const ARCLIGHT_METADATA_PREFIX: &str = "oai_ead";
 
 #[derive(Debug, Clone)]
 pub struct ArcLightIndexerConfig {
-    pub(super) configuration: PathBuf,
-    pub(super) dir: PathBuf,
-    pub(super) repository: String,
-    pub(super) repository_file: PathBuf,
-    pub(super) record_timeout_seconds: u64,
-    pub(super) solr_url: String,
-    pub(super) solr_commit_within_ms: u64,
-}
-
-pub struct ArcLightIndexerConfigInput {
     pub configuration: PathBuf,
     pub dir: PathBuf,
     pub repository: String,
@@ -27,25 +17,11 @@ pub struct ArcLightIndexerConfigInput {
     pub solr_commit_within_ms: u64,
 }
 
-impl ArcLightIndexerConfig {
-    pub fn new(input: ArcLightIndexerConfigInput) -> Self {
-        Self {
-            configuration: input.configuration,
-            dir: input.dir,
-            repository: input.repository,
-            repository_file: input.repository_file,
-            record_timeout_seconds: input.record_timeout_seconds,
-            solr_url: input.solr_url,
-            solr_commit_within_ms: input.solr_commit_within_ms,
-        }
-    }
-}
-
 pub fn build_config(cfg: ArcLightArgs) -> anyhow::Result<ArcLightIndexerConfig> {
     ensure_traject_available()?;
     let (configuration, data_dir, repository_file) = resolve_paths(&cfg)?;
 
-    Ok(ArcLightIndexerConfig::new(ArcLightIndexerConfigInput {
+    Ok(ArcLightIndexerConfig {
         configuration,
         dir: data_dir,
         repository: cfg.repository,
@@ -53,7 +29,7 @@ pub fn build_config(cfg: ArcLightArgs) -> anyhow::Result<ArcLightIndexerConfig> 
         record_timeout_seconds: cfg.record_timeout_seconds,
         solr_url: cfg.solr_url,
         solr_commit_within_ms: cfg.solr_commit_within_ms,
-    }))
+    })
 }
 
 fn resolve_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {

@@ -8,8 +8,7 @@ pub use harvester::{Harvester, HarvesterArgs, OaiConfig, OaiRecordId};
 pub use indexer::arclight::ArcLightIndexer;
 pub use indexer::arclight::cli::{ArcLightArgs, ArcLightReindexArgs, ArcLightRetryArgs};
 pub use indexer::arclight::config::{
-    ARCLIGHT_METADATA_PREFIX, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
-    build_config as build_arclight_config,
+    ARCLIGHT_METADATA_PREFIX, ArcLightIndexerConfig, build_config as build_arclight_config,
 };
 pub use indexer::{IndexRunOptions, IndexerContext, run as run_indexer};
 

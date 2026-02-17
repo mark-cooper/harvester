@@ -3,8 +3,8 @@ mod support;
 use std::{env, path::Path};
 
 use harvester::{
-    ARCLIGHT_METADATA_PREFIX, ArcLightIndexer, ArcLightIndexerConfig, ArcLightIndexerConfigInput,
-    IndexRunOptions, IndexerContext, run_indexer,
+    ARCLIGHT_METADATA_PREFIX, ArcLightIndexer, ArcLightIndexerConfig, IndexRunOptions,
+    IndexerContext, run_indexer,
 };
 use support::{
     DEFAULT_DATESTAMP, acquire_test_lock, create_temp_dir, create_temp_file, create_traject_shim,
@@ -60,7 +60,7 @@ fn build_config(
     repository_file: std::path::PathBuf,
     solr_url: String,
 ) -> ArcLightIndexerConfig {
-    ArcLightIndexerConfig::new(ArcLightIndexerConfigInput {
+    ArcLightIndexerConfig {
         configuration,
         dir: data_dir,
         repository: REPOSITORY_ID.to_string(),
@@ -68,7 +68,7 @@ fn build_config(
         record_timeout_seconds: 5,
         solr_url,
         solr_commit_within_ms: 1000,
-    })
+    }
 }
 
 fn build_context(
