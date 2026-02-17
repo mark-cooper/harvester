@@ -1,7 +1,7 @@
 use sqlx::postgres::PgQueryResult;
 use sqlx::{Error, PgPool};
 
-use crate::harvester::oai::{OaiIndexStatus, OaiRecordId, OaiRecordStatus};
+use crate::oai::{OaiIndexStatus, OaiRecordId, OaiRecordStatus};
 
 pub struct FetchIndexCandidatesParams<'a> {
     pub endpoint: &'a str,

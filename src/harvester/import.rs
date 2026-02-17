@@ -1,4 +1,4 @@
-use crate::harvester::oai::{OaiRecordImport, OaiRecordStatus};
+use crate::oai::{OaiRecordImport, OaiRecordStatus};
 
 use super::Harvester;
 

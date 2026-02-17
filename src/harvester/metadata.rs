@@ -2,7 +2,8 @@ use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 
 use crate::{
     db::{FetchRecordsParams, UpdateStatusParams, do_update_status_query, fetch_records_by_status},
-    harvester::{oai::OaiRecordStatus, rules::RuleSet},
+    harvester::rules::RuleSet,
+    oai::OaiRecordStatus,
 };
 
 use super::Harvester;
@@ -230,7 +231,7 @@ async fn update_record_metadata(
     .bind(identifier)
     .bind(OaiRecordStatus::Parsed.as_str())
     .bind(metadata)
-    .bind(crate::harvester::oai::OaiIndexStatus::Pending.as_str())
+    .bind(crate::oai::OaiIndexStatus::Pending.as_str())
     .execute(&harvester.pool)
     .await?;
     Ok(())

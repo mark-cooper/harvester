@@ -1,13 +1,13 @@
 mod download;
 mod import;
 mod metadata;
-pub mod oai;
 mod rules;
 
 use std::path::{self, PathBuf};
 
 use clap::Args;
-pub use oai::{OaiConfig, OaiRecordId};
+
+use crate::oai::OaiConfig;
 
 use sqlx::PgPool;
 

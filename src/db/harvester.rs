@@ -1,7 +1,7 @@
 use sqlx::postgres::PgQueryResult;
 use sqlx::{Error, PgPool};
 
-use crate::harvester::oai::OaiRecordId;
+use crate::oai::OaiRecordId;
 
 pub struct FetchRecordsParams<'a> {
     pub endpoint: &'a str,

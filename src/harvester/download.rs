@@ -7,7 +7,7 @@ use tokio::fs;
 use crate::db::{
     FetchRecordsParams, UpdateStatusParams, do_update_status_query, fetch_records_by_status,
 };
-use crate::harvester::oai::{OaiRecordId, OaiRecordStatus};
+use crate::oai::{OaiRecordId, OaiRecordStatus};
 
 use super::Harvester;
 
