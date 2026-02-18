@@ -8,12 +8,12 @@ pub use indexer::*;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Error, PgPool};
 
-use crate::OaiRecordId;
+use crate::{OaiRecordId, oai::OaiRecordStatus};
 
 pub struct FetchRecordsParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
-    pub status: &'a str,
+    pub status: OaiRecordStatus,
     pub last_identifier: Option<&'a str>,
 }
 
@@ -49,7 +49,7 @@ pub async fn fetch_records_by_status(
                 params.endpoint,
                 params.metadata_prefix,
                 last_id,
-                params.status
+                params.status.as_str()
             )
             .fetch_all(pool)
             .await
@@ -68,7 +68,7 @@ pub async fn fetch_records_by_status(
                 "#,
                 params.endpoint,
                 params.metadata_prefix,
-                params.status
+                params.status.as_str()
             )
             .fetch_all(pool)
             .await

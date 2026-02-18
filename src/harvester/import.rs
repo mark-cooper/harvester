@@ -1,4 +1,4 @@
-use crate::oai::{OaiRecordImport, OaiRecordStatus};
+use crate::oai::{OaiIndexStatus, OaiRecordImport, OaiRecordStatus};
 
 use super::Harvester;
 
@@ -89,19 +89,19 @@ async fn batch_upsert_records(
             status = EXCLUDED.status,
             message = '',
             index_status = CASE
-                WHEN EXCLUDED.status = 'deleted' THEN 'pending'
+                WHEN EXCLUDED.status = $8 THEN $9
                 ELSE oai_records.index_status
             END,
             index_message = CASE
-                WHEN EXCLUDED.status = 'deleted' THEN ''
+                WHEN EXCLUDED.status = $8 THEN ''
                 ELSE oai_records.index_message
             END,
             purged_at = CASE
-                WHEN EXCLUDED.status = 'deleted' THEN NULL
+                WHEN EXCLUDED.status = $8 THEN NULL
                 ELSE oai_records.purged_at
             END,
             index_last_checked_at = CASE
-                WHEN EXCLUDED.status = 'deleted' THEN NULL
+                WHEN EXCLUDED.status = $8 THEN NULL
                 ELSE oai_records.index_last_checked_at
             END,
             version = oai_records.version + 1,
@@ -118,6 +118,8 @@ async fn batch_upsert_records(
     .bind(&statuses)
     .bind(batch_len)
     .bind(OaiRecordStatus::Failed.as_str())
+    .bind(OaiRecordStatus::Deleted.as_str())
+    .bind(OaiIndexStatus::Pending.as_str())
     .fetch_all(&harvester.pool)
     .await?;
 

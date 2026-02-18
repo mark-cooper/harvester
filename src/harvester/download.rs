@@ -5,7 +5,8 @@ use oai_pmh::{Client, GetRecordArgs};
 use tokio::fs;
 
 use crate::db::{
-    FetchRecordsParams, UpdateStatusParams, do_update_status_query, fetch_records_by_status,
+    FetchRecordsParams, RecordFailureParams, RecordTransitionParams,
+    do_mark_download_failure_query, do_mark_download_success_query, fetch_records_by_status,
 };
 use crate::oai::{OaiRecordId, OaiRecordStatus};
 
@@ -38,7 +39,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
         let params = FetchRecordsParams {
             endpoint: &harvester.config.endpoint,
             metadata_prefix: &harvester.config.metadata_prefix,
-            status: OaiRecordStatus::Pending.as_str(),
+            status: OaiRecordStatus::Pending,
             last_identifier: last_identifier.as_deref(),
         };
         let batch = fetch_records_by_status(&harvester.pool, params).await?;
@@ -105,15 +106,9 @@ async fn download_record(
                     return mark_record_failed(harvester, record, &message).await;
                 }
 
-                match update_record_status(
-                    harvester,
-                    record,
-                    OaiRecordStatus::Available.as_str(),
-                    "",
-                )
-                .await
-                {
-                    Ok(()) => RecordResult::Downloaded,
+                match mark_record_available(harvester, record).await {
+                    Ok(true) => RecordResult::Downloaded,
+                    Ok(false) => RecordResult::FailedToMark,
                     Err(error) => {
                         eprintln!(
                             "Record {} downloaded but could not be marked available: {}",
@@ -137,8 +132,22 @@ async fn mark_record_failed(
     record: &OaiRecordId,
     message: &str,
 ) -> RecordResult {
-    match update_record_status(harvester, record, OaiRecordStatus::Failed.as_str(), message).await {
-        Ok(()) => RecordResult::Failed,
+    let params = RecordFailureParams {
+        endpoint: &harvester.config.endpoint,
+        metadata_prefix: &harvester.config.metadata_prefix,
+        identifier: &record.identifier,
+        message,
+    };
+
+    match do_mark_download_failure_query(&harvester.pool, params).await {
+        Ok(result) if result.rows_affected() == 1 => RecordResult::Failed,
+        Ok(_) => {
+            eprintln!(
+                "Skipped transition pending->failed for {} (record is no longer pending)",
+                record.identifier
+            );
+            RecordResult::FailedToMark
+        }
         Err(error) => {
             eprintln!(
                 "Record {} failed and could not be marked failed (reason: {}; update error: {})",
@@ -149,21 +158,26 @@ async fn mark_record_failed(
     }
 }
 
-async fn update_record_status(
+async fn mark_record_available(
     harvester: &Harvester,
     record: &OaiRecordId,
-    status: &str,
-    message: &str,
-) -> anyhow::Result<()> {
-    let params = UpdateStatusParams {
+) -> anyhow::Result<bool> {
+    let params = RecordTransitionParams {
         endpoint: &harvester.config.endpoint,
         metadata_prefix: &harvester.config.metadata_prefix,
         identifier: &record.identifier,
-        status,
-        message,
     };
-    do_update_status_query(&harvester.pool, params).await?;
-    Ok(())
+
+    let result = do_mark_download_success_query(&harvester.pool, params).await?;
+    if result.rows_affected() == 0 {
+        eprintln!(
+            "Skipped transition pending->available for {} (record is no longer pending)",
+            record.identifier
+        );
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 async fn write_metadata_to_file(path: PathBuf, metadata: &str) -> anyhow::Result<()> {

@@ -84,6 +84,9 @@ struct ProcessStats {
     failed: usize,
 }
 
+/// Index worker phases and their expected transitions:
+/// - `Index`: `(status=parsed, index_status=pending|index_failed) -> indexed|index_failed`
+/// - `Purge`: `(status=deleted, index_status=pending|purge_failed) -> purged|purge_failed`
 enum RecordPhase {
     Index,
     Purge,
@@ -155,19 +158,31 @@ async fn mark_success(
     ctx: &IndexerContext,
     phase: &RecordPhase,
     record: &OaiRecordId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let params = UpdateIndexStatusParams {
         endpoint: &ctx.endpoint,
         metadata_prefix: &ctx.metadata_prefix,
         identifier: &record.identifier,
     };
 
-    match phase {
+    let result = match phase {
         RecordPhase::Index => do_mark_index_success_query(&ctx.pool, params).await?,
         RecordPhase::Purge => do_mark_purge_success_query(&ctx.pool, params).await?,
     };
 
-    Ok(())
+    if result.rows_affected() == 0 {
+        let transition = match phase {
+            RecordPhase::Index => "pending|index_failed->indexed",
+            RecordPhase::Purge => "pending|purge_failed->purged",
+        };
+        eprintln!(
+            "Skipped transition {} for {} (record is no longer in an expected state)",
+            transition, record.identifier
+        );
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 async fn mark_failure(
@@ -183,10 +198,21 @@ async fn mark_failure(
         message,
     };
 
-    match phase {
+    let result = match phase {
         RecordPhase::Index => do_mark_index_failure_query(&ctx.pool, params).await?,
         RecordPhase::Purge => do_mark_purge_failure_query(&ctx.pool, params).await?,
     };
+
+    if result.rows_affected() == 0 {
+        let transition = match phase {
+            RecordPhase::Index => "pending|index_failed->index_failed",
+            RecordPhase::Purge => "pending|purge_failed->purge_failed",
+        };
+        eprintln!(
+            "Skipped transition {} for {} (record is no longer in an expected state)",
+            transition, record.identifier
+        );
+    }
 
     Ok(())
 }
@@ -232,14 +258,14 @@ async fn process_records<T: Indexer>(
 
             for (record, result) in results {
                 match result {
-                    Ok(()) => {
-                        if let Err(e) = mark_success(ctx, &phase, record).await {
+                    Ok(()) => match mark_success(ctx, &phase, record).await {
+                        Ok(true) => succeeded += 1,
+                        Ok(false) => {}
+                        Err(e) => {
                             failed += 1;
                             eprintln!("Failed to mark success for {}: {}", record.identifier, e);
-                        } else {
-                            succeeded += 1;
                         }
-                    }
+                    },
                     Err(e) => {
                         failed += 1;
                         let message = truncate_middle(&e.to_string(), 200, 200);

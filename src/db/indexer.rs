@@ -263,6 +263,7 @@ pub async fn fetch_failed_records_for_purging(
     }
 }
 
+/// Transition: `(status=parsed, index_status=pending|index_failed) -> index_status=indexed`.
 pub async fn do_mark_index_success_query(
     pool: &PgPool,
     params: UpdateIndexStatusParams<'_>,
@@ -275,17 +276,25 @@ pub async fn do_mark_index_success_query(
             indexed_at = NOW(),
             purged_at = NULL,
             index_last_checked_at = NOW()
-        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
+        WHERE endpoint = $1
+          AND metadata_prefix = $2
+          AND identifier = $3
+          AND status = $5
+          AND (index_status = $6 OR index_status = $7)
         "#,
     )
     .bind(params.endpoint)
     .bind(params.metadata_prefix)
     .bind(params.identifier)
     .bind(OaiIndexStatus::Indexed.as_str())
+    .bind(OaiRecordStatus::Parsed.as_str())
+    .bind(OaiIndexStatus::Pending.as_str())
+    .bind(OaiIndexStatus::IndexFailed.as_str())
     .execute(pool)
     .await
 }
 
+/// Transition: `(status=parsed, index_status=pending|index_failed) -> index_status=index_failed`.
 pub async fn do_mark_index_failure_query(
     pool: &PgPool,
     params: UpdateIndexFailureParams<'_>,
@@ -297,7 +306,11 @@ pub async fn do_mark_index_failure_query(
             index_message = $5,
             index_attempts = index_attempts + 1,
             index_last_checked_at = NOW()
-        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
+        WHERE endpoint = $1
+          AND metadata_prefix = $2
+          AND identifier = $3
+          AND status = $6
+          AND (index_status = $7 OR index_status = $8)
         "#,
     )
     .bind(params.endpoint)
@@ -305,10 +318,14 @@ pub async fn do_mark_index_failure_query(
     .bind(params.identifier)
     .bind(OaiIndexStatus::IndexFailed.as_str())
     .bind(params.message)
+    .bind(OaiRecordStatus::Parsed.as_str())
+    .bind(OaiIndexStatus::Pending.as_str())
+    .bind(OaiIndexStatus::IndexFailed.as_str())
     .execute(pool)
     .await
 }
 
+/// Transition: `(status=deleted, index_status=pending|purge_failed) -> index_status=purged`.
 pub async fn do_mark_purge_success_query(
     pool: &PgPool,
     params: UpdateIndexStatusParams<'_>,
@@ -321,17 +338,25 @@ pub async fn do_mark_purge_success_query(
             indexed_at = NULL,
             purged_at = NOW(),
             index_last_checked_at = NOW()
-        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
+        WHERE endpoint = $1
+          AND metadata_prefix = $2
+          AND identifier = $3
+          AND status = $5
+          AND (index_status = $6 OR index_status = $7)
         "#,
     )
     .bind(params.endpoint)
     .bind(params.metadata_prefix)
     .bind(params.identifier)
     .bind(OaiIndexStatus::Purged.as_str())
+    .bind(OaiRecordStatus::Deleted.as_str())
+    .bind(OaiIndexStatus::Pending.as_str())
+    .bind(OaiIndexStatus::PurgeFailed.as_str())
     .execute(pool)
     .await
 }
 
+/// Transition: `(status=deleted, index_status=pending|purge_failed) -> index_status=purge_failed`.
 pub async fn do_mark_purge_failure_query(
     pool: &PgPool,
     params: UpdateIndexFailureParams<'_>,
@@ -343,7 +368,11 @@ pub async fn do_mark_purge_failure_query(
             index_message = $5,
             index_attempts = index_attempts + 1,
             index_last_checked_at = NOW()
-        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
+        WHERE endpoint = $1
+          AND metadata_prefix = $2
+          AND identifier = $3
+          AND status = $6
+          AND (index_status = $7 OR index_status = $8)
         "#,
     )
     .bind(params.endpoint)
@@ -351,10 +380,14 @@ pub async fn do_mark_purge_failure_query(
     .bind(params.identifier)
     .bind(OaiIndexStatus::PurgeFailed.as_str())
     .bind(params.message)
+    .bind(OaiRecordStatus::Deleted.as_str())
+    .bind(OaiIndexStatus::Pending.as_str())
+    .bind(OaiIndexStatus::PurgeFailed.as_str())
     .execute(pool)
     .await
 }
 
+/// CLI reindex transition: `(status=parsed|deleted, any index_status) -> index_status=pending`.
 pub async fn do_reindex_state_query(
     pool: &PgPool,
     params: ReindexStateParams<'_>,

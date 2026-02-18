@@ -48,7 +48,7 @@ enum ArcLightCommands {
     #[command(name = "retry", arg_required_else_help = true)]
     Retry(ArcLightRetryArgs),
 
-    /// Requeue all parsed/deleted records for this OAI repository
+    /// Requeue parsed/deleted records for this OAI repository to `index_status=pending`
     #[command(name = "reindex", arg_required_else_help = true)]
     Reindex(ArcLightReindexArgs),
 }

@@ -1,7 +1,10 @@
 use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 
 use crate::{
-    db::{FetchRecordsParams, UpdateStatusParams, do_update_status_query, fetch_records_by_status},
+    db::{
+        FetchRecordsParams, RecordFailureParams, RecordParsedParams,
+        do_mark_metadata_failure_query, do_mark_metadata_success_query, fetch_records_by_status,
+    },
     harvester::rules::RuleSet,
     oai::OaiRecordStatus,
 };
@@ -21,7 +24,7 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
         let params = FetchRecordsParams {
             endpoint: &harvester.config.endpoint,
             metadata_prefix: &harvester.config.metadata_prefix,
-            status: OaiRecordStatus::Available.as_str(),
+            status: OaiRecordStatus::Available,
             last_identifier: last_identifier.as_deref(),
         };
         let batch = fetch_records_by_status(&harvester.pool, params).await?;
@@ -38,11 +41,14 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
                 Err(error) => {
                     let message =
                         format!("Unable to open metadata file {}: {}", path.display(), error);
-                    if mark_record_failed(harvester, &record.identifier, &message).await {
-                        total_failed += 1;
-                    } else {
-                        total_failed_to_mark += 1;
-                    }
+                    handle_failure_mark_result(
+                        harvester,
+                        &record.identifier,
+                        &message,
+                        &mut total_failed,
+                        &mut total_failed_to_mark,
+                    )
+                    .await;
                     continue;
                 }
             };
@@ -50,24 +56,31 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
             match extract_metadata(&file, &rules) {
                 Ok(metadata) => {
                     match update_record_metadata(harvester, &record.identifier, metadata).await {
-                        Ok(()) => total_processed += 1,
+                        Ok(true) => total_processed += 1,
+                        Ok(false) => total_failed_to_mark += 1,
                         Err(error) => {
                             let message = format!("Unable to update parsed metadata: {}", error);
-                            if mark_record_failed(harvester, &record.identifier, &message).await {
-                                total_failed += 1;
-                            } else {
-                                total_failed_to_mark += 1;
-                            }
+                            handle_failure_mark_result(
+                                harvester,
+                                &record.identifier,
+                                &message,
+                                &mut total_failed,
+                                &mut total_failed_to_mark,
+                            )
+                            .await;
                         }
                     }
                 }
                 Err(error) => {
                     let message = error.to_string();
-                    if mark_record_failed(harvester, &record.identifier, &message).await {
-                        total_failed += 1;
-                    } else {
-                        total_failed_to_mark += 1;
-                    }
+                    handle_failure_mark_result(
+                        harvester,
+                        &record.identifier,
+                        &message,
+                        &mut total_failed,
+                        &mut total_failed_to_mark,
+                    )
+                    .await;
                 }
             }
         }
@@ -173,24 +186,48 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_
     Ok(serde_json::Value::Object(json_map))
 }
 
-async fn mark_record_failed(harvester: &Harvester, identifier: &str, message: &str) -> bool {
-    let params = UpdateStatusParams {
+async fn handle_failure_mark_result(
+    harvester: &Harvester,
+    identifier: &str,
+    message: &str,
+    total_failed: &mut usize,
+    total_failed_to_mark: &mut usize,
+) {
+    match mark_record_failed(harvester, identifier, message).await {
+        Ok(true) => *total_failed += 1,
+        Ok(false) => *total_failed_to_mark += 1,
+        Err(update_error) => {
+            eprintln!(
+                "Record {} failed but could not be marked failed (reason: {}; update error: {})",
+                identifier, message, update_error
+            );
+            *total_failed_to_mark += 1;
+        }
+    }
+}
+
+async fn mark_record_failed(
+    harvester: &Harvester,
+    identifier: &str,
+    message: &str,
+) -> anyhow::Result<bool> {
+    let params = RecordFailureParams {
         endpoint: &harvester.config.endpoint,
         metadata_prefix: &harvester.config.metadata_prefix,
         identifier,
-        status: OaiRecordStatus::Failed.as_str(),
         message,
     };
 
-    match do_update_status_query(&harvester.pool, params).await {
-        Ok(_) => true,
-        Err(error) => {
+    match do_mark_metadata_failure_query(&harvester.pool, params).await {
+        Ok(result) if result.rows_affected() == 1 => Ok(true),
+        Ok(_) => {
             eprintln!(
-                "Record {} failed but could not be marked failed (reason: {}; update error: {})",
-                identifier, message, error
+                "Skipped transition available->failed for {} (record is no longer available)",
+                identifier
             );
-            false
+            Ok(false)
         }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -211,30 +248,24 @@ async fn update_record_metadata(
     harvester: &Harvester,
     identifier: &str,
     metadata: serde_json::Value,
-) -> anyhow::Result<()> {
-    sqlx::query(
-        r#"
-        UPDATE oai_records
-        SET status = $4,
-            metadata = $5,
-            index_status = $6,
-            index_message = '',
-            indexed_at = NULL,
-            purged_at = NULL,
-            index_last_checked_at = NULL,
-            last_checked_at = NOW()
-        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
-        "#,
-    )
-    .bind(&harvester.config.endpoint)
-    .bind(&harvester.config.metadata_prefix)
-    .bind(identifier)
-    .bind(OaiRecordStatus::Parsed.as_str())
-    .bind(metadata)
-    .bind(crate::oai::OaiIndexStatus::Pending.as_str())
-    .execute(&harvester.pool)
-    .await?;
-    Ok(())
+) -> anyhow::Result<bool> {
+    let params = RecordParsedParams {
+        endpoint: &harvester.config.endpoint,
+        metadata_prefix: &harvester.config.metadata_prefix,
+        identifier,
+        metadata,
+    };
+
+    let result = do_mark_metadata_success_query(&harvester.pool, params).await?;
+    if result.rows_affected() == 0 {
+        eprintln!(
+            "Skipped transition available->parsed for {} (record is no longer available)",
+            identifier
+        );
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 #[cfg(test)]

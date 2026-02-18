@@ -54,6 +54,17 @@ impl From<Header> for OaiRecordImport {
     }
 }
 
+/// Harvest lifecycle states for `oai_records.status`.
+///
+/// Expected transitions:
+/// - import: `* -> pending|deleted` for changed records (`failed` records are intentionally sticky)
+/// - download: `pending -> available|failed`
+/// - metadata: `available -> parsed|failed`
+///
+/// Index lifecycle ownership:
+/// - metadata success also resets index lifecycle (`index_status -> pending`)
+/// - import of deleted records also requeues index lifecycle (`index_status -> pending`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OaiRecordStatus {
     Available,
     Deleted,
@@ -80,6 +91,15 @@ impl std::fmt::Display for OaiRecordStatus {
     }
 }
 
+/// Index lifecycle states for `oai_records.index_status`.
+///
+/// Expected transitions:
+/// - metadata success: `* -> pending` when a record becomes `parsed`
+/// - import deleted: `* -> pending` when a record becomes `deleted`
+/// - index run: `pending|index_failed -> indexed|index_failed`
+/// - purge run: `pending|purge_failed -> purged|purge_failed`
+/// - CLI reindex: `* -> pending` for matching `parsed|deleted` records
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OaiIndexStatus {
     IndexFailed,
     Indexed,
@@ -97,5 +117,11 @@ impl OaiIndexStatus {
             OaiIndexStatus::Purged => "purged",
             OaiIndexStatus::PurgeFailed => "purge_failed",
         }
+    }
+}
+
+impl std::fmt::Display for OaiIndexStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
