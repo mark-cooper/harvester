@@ -12,6 +12,12 @@ pub struct FetchIndexCandidatesParams<'a> {
     pub last_identifier: Option<&'a str>,
 }
 
+pub struct ReindexStateParams<'a> {
+    pub endpoint: &'a str,
+    pub metadata_prefix: &'a str,
+    pub oai_repository: &'a str,
+}
+
 pub struct UpdateIndexFailureParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
@@ -23,12 +29,6 @@ pub struct UpdateIndexStatusParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
     pub identifier: &'a str,
-}
-
-pub struct ReindexStateParams<'a> {
-    pub endpoint: &'a str,
-    pub metadata_prefix: &'a str,
-    pub oai_repository: &'a str,
 }
 
 pub async fn fetch_pending_records_for_indexing(
