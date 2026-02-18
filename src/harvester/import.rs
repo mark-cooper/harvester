@@ -51,7 +51,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     }
 
     println!(
-        "Processed {} records (imported: {}, deleted: {})",
+        "Imported {} records (active: {}, deleted: {})",
         total.processed, total.imported, total.deleted
     );
     Ok(())
