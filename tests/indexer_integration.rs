@@ -110,13 +110,14 @@ async fn index_success_marks_record_indexed() -> anyhow::Result<()> {
     let shim = create_traject_shim("index-success-traject")?;
     let _path_guard = prepend_path(shim.parent().unwrap());
     let _mode_guard = EnvVarGuard::set("TRAJECT_SHIM_MODE", "success".to_string());
+    let solr = start_mock_solr_server(200, r#"{"responseHeader":{"status":0}}"#).await?;
 
     let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
     let config = build_config(
         configuration,
         data_dir,
         repository_file,
-        "http://127.0.0.1:65535/solr/arclight".to_string(),
+        solr.solr_url.clone(),
     );
     let indexer = ArcLightIndexer::new(config);
     run_indexer(&ctx, &indexer).await?;
@@ -158,13 +159,14 @@ async fn index_failure_marks_record_index_failed() -> anyhow::Result<()> {
     let _mode_guard = EnvVarGuard::set("TRAJECT_SHIM_MODE", "fail".to_string());
     let _message_guard =
         EnvVarGuard::set("TRAJECT_SHIM_MESSAGE", "shim traject failure".to_string());
+    let solr = start_mock_solr_server(200, r#"{"responseHeader":{"status":0}}"#).await?;
 
     let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
     let config = build_config(
         configuration,
         data_dir,
         repository_file,
-        "http://127.0.0.1:65535/solr/arclight".to_string(),
+        solr.solr_url.clone(),
     );
     let indexer = ArcLightIndexer::new(config);
     let result = run_indexer(&ctx, &indexer).await;
@@ -220,13 +222,14 @@ async fn index_batch_mixed_results_continue_processing_remaining_records() -> an
     let _failure_guard = EnvVarGuard::set("TRAJECT_SHIM_FAIL_ID", failure_fingerprint);
     let _message_guard =
         EnvVarGuard::set("TRAJECT_SHIM_MESSAGE", "shim targeted failure".to_string());
+    let solr = start_mock_solr_server(200, r#"{"responseHeader":{"status":0}}"#).await?;
 
     let ctx = build_context(pool.clone(), IndexRunOptions::pending_only(), false);
     let config = build_config(
         configuration,
         data_dir,
         repository_file,
-        "http://127.0.0.1:65535/solr/arclight".to_string(),
+        solr.solr_url.clone(),
     );
     let indexer = ArcLightIndexer::new(config);
     let result = run_indexer(&ctx, &indexer).await;

@@ -186,8 +186,6 @@ impl Indexer for ArcLightIndexer {
     }
 
     fn delete_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>> {
-        Box::pin(async move {
-            self.solr_delete_by_root(&record.fingerprint, false).await
-        })
+        Box::pin(async move { self.solr_delete_by_root(&record.fingerprint, false).await })
     }
 }
