@@ -47,6 +47,12 @@ check: ## Run cargo check
 db: ## Create the sqlx database query files
 	cargo sqlx prepare
 
+diff-traject: ## Diff local traject vs. upstream
+	cp -r arclight/lib/arclight/traject/ /tmp/traject-upstream
+	cp -r traject/ /tmp/traject-ours
+	rubocop --auto-correct-all /tmp/traject-upstream/ /tmp/traject-ours/ 2>/dev/null || true
+	diff -ru /tmp/traject-upstream/ /tmp/traject-ours/
+
 fmt: ## Format code
 	cargo fmt
 
