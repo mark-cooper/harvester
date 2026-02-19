@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use super::config::ARCLIGHT_METADATA_PREFIX;
-
 #[derive(Debug, Args)]
 pub struct ArcLightArgs {
     /// Target repository id
@@ -42,19 +40,10 @@ pub struct ArcLightArgs {
     /// Solr commit-within window for delete operations (interval commit strategy)
     #[arg(long, default_value_t = 10000)]
     pub solr_commit_within_ms: u64,
-}
 
-#[derive(Debug, Args)]
-pub struct ArcLightReindexArgs {
-    /// Source OAI endpoint url
-    pub oai_endpoint: String,
-
-    /// Source OAI repository name
-    pub oai_repository: String,
-
-    /// OAI metadata prefix
-    #[arg(short, long, default_value = ARCLIGHT_METADATA_PREFIX)]
-    pub metadata_prefix: String,
+    /// Reset index state to pending before running (reindex all parsed/deleted records)
+    #[arg(long, default_value_t = false)]
+    pub reindex: bool,
 }
 
 #[derive(Debug, Args)]

@@ -2,9 +2,9 @@ use std::path;
 
 use clap::{Parser, Subcommand};
 use harvester::{
-    ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, ArcLightReindexArgs,
-    ArcLightRetryArgs, Harvester, HarvesterArgs, IndexRunOptions, IndexerContext, OaiConfig,
-    build_arclight_config, db, expand_path, run_indexer,
+    ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, ArcLightRetryArgs, Harvester,
+    HarvesterArgs, IndexRunOptions, IndexerContext, OaiConfig, build_arclight_config, db,
+    expand_path, run_indexer,
 };
 
 /// OAI-PMH harvester
@@ -47,10 +47,6 @@ enum ArcLightCommands {
     /// Retry only failed index/purge records
     #[command(name = "retry", arg_required_else_help = true)]
     Retry(ArcLightRetryArgs),
-
-    /// Requeue parsed/deleted records for this OAI repository to `index_status=pending`
-    #[command(name = "reindex", arg_required_else_help = true)]
-    Reindex(ArcLightReindexArgs),
 }
 
 #[tokio::main]
@@ -78,6 +74,20 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Index(IndexCommands::ArcLight(command)) => match command {
             ArcLightCommands::Run(cfg) => {
+                if cfg.reindex {
+                    let params = db::ReindexStateParams {
+                        endpoint: &cfg.oai_endpoint,
+                        metadata_prefix: ARCLIGHT_METADATA_PREFIX,
+                        oai_repository: &cfg.oai_repository,
+                    };
+
+                    let result = db::do_reindex_state_query(&pool, params).await?;
+                    println!(
+                        "Requeued {} record(s) to pending index status",
+                        result.rows_affected()
+                    );
+                }
+
                 println!("Indexing records into {}", cfg.repository);
 
                 let ctx = IndexerContext::new(
@@ -113,20 +123,6 @@ async fn main() -> anyhow::Result<()> {
                 let indexer = ArcLightIndexer::new(config);
 
                 run_indexer(&ctx, &indexer).await?;
-            }
-            ArcLightCommands::Reindex(cfg) => {
-                let params = db::ReindexStateParams {
-                    endpoint: &cfg.oai_endpoint,
-                    metadata_prefix: &cfg.metadata_prefix,
-                    oai_repository: &cfg.oai_repository,
-                };
-
-                let result = db::do_reindex_state_query(&pool, params).await?;
-
-                println!(
-                    "Requeued {} record(s) to pending index status",
-                    result.rows_affected()
-                );
             }
         },
     }

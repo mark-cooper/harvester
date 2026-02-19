@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub use harvester::{Harvester, HarvesterArgs};
 pub use indexer::arclight::ArcLightIndexer;
-pub use indexer::arclight::cli::{ArcLightArgs, ArcLightReindexArgs, ArcLightRetryArgs};
+pub use indexer::arclight::cli::{ArcLightArgs, ArcLightRetryArgs};
 pub use indexer::arclight::config::{
     ARCLIGHT_METADATA_PREFIX, ArcLightIndexerConfig, build_config as build_arclight_config,
 };
