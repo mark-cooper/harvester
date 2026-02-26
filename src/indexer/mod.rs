@@ -1,7 +1,5 @@
 pub mod arclight;
 
-use std::process::Command;
-
 use futures::{StreamExt, future::BoxFuture, stream};
 use sqlx::PgPool;
 
@@ -90,16 +88,6 @@ struct ProcessStats {
 enum RecordPhase {
     Index,
     Purge,
-}
-
-pub(crate) fn ensure_traject_available() -> anyhow::Result<()> {
-    let status = Command::new("traject").args(["--version"]).status()?;
-
-    if !status.success() {
-        anyhow::bail!("traject failed with exit code: {:?}", status.code());
-    }
-
-    Ok(())
 }
 
 pub trait Indexer: Sync {

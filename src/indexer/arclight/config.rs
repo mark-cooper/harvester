@@ -1,6 +1,9 @@
-use std::path::{self, PathBuf};
+use std::{
+    path::{self, PathBuf},
+    process::Command,
+};
 
-use crate::{expand_path, indexer::ensure_traject_available};
+use crate::expand_path;
 
 use super::cli::ArcLightArgs;
 
@@ -30,6 +33,16 @@ pub fn build_config(cfg: ArcLightArgs) -> anyhow::Result<ArcLightIndexerConfig> 
         solr_url: cfg.solr_url,
         solr_commit_within_ms: cfg.solr_commit_within_ms,
     })
+}
+
+fn ensure_traject_available() -> anyhow::Result<()> {
+    let status = Command::new("traject").args(["--version"]).status()?;
+
+    if !status.success() {
+        anyhow::bail!("traject failed with exit code: {:?}", status.code());
+    }
+
+    Ok(())
 }
 
 fn resolve_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
