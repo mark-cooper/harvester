@@ -2,6 +2,16 @@
 
 OAI-PMH record harvester.
 
+## Setup
+
+[Mise](https://mise.jdx.dev/) is recommended for version management.
+
+```bash
+mise trust
+mise install
+mise run gems
+```
+
 The harvester requires a postgres connection. The default connection config is in `.env` but can be overriden by `.env.local`. To setup:
 
 ```bash

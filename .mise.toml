@@ -1,0 +1,7 @@
+[tools]
+rust = "stable"
+ruby = "4"
+
+[tasks.gems]
+description = "Install Ruby gems"
+run = "bundle install"
