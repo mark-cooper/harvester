@@ -18,7 +18,7 @@ pub struct ArcLightArgs {
     pub configuration: PathBuf,
 
     /// EAD base directory
-    #[arg(short, long, default_value = "data")]
+    #[arg(short, long, default_value = "data", env = "DATA_DIR")]
     pub dir: PathBuf,
 
     /// Preview mode (show matching records, do not index or delete)
@@ -26,7 +26,12 @@ pub struct ArcLightArgs {
     pub preview: bool,
 
     /// Solr url
-    #[arg(short, long, default_value = "http://127.0.0.1:8983/solr/arclight")]
+    #[arg(
+        short,
+        long,
+        default_value = "http://127.0.0.1:8983/solr/arclight",
+        env = "SOLR_URL"
+    )]
     pub solr_url: String,
 
     /// Per-record timeout for traject and Solr operations

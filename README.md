@@ -97,6 +97,14 @@ docker run -it --rm --network host \
     -e METADATA_PREFIX=oai_ead \
     -e RULES_FILE=/app/rules/default.txt \
     harvester harvest https://test.archivesspace.org/oai
+
+# this requires a running instance of arclight with appropriate repositories.yml
+docker run -it --rm --network host \
+    -v ./data:/app/data \
+    -e DATABASE_URL=postgres://harvester:harvester@localhost:5432/harvester \
+    -e DATA_DIR=/app/data \
+    -e SOLR_URL=http://127.0.0.1:8983/solr/arclight \
+    harvester index arclight run "allen-doe-research-center" "https://test.archivesspace.org/oai" "Allen Doe Research Center"
 ```
 
 For rootless Docker, override the user to avoid bind mount permission issues i.e. add `--user root` which remaps to the host UID anyway.
