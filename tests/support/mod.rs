@@ -135,6 +135,8 @@ pub async fn run_harvest(
         data_dir,
         endpoint: endpoint.to_string(),
         metadata_prefix: METADATA_PREFIX.to_string(),
+        oai_timeout: 10,
+        oai_retries: 0,
     };
     let harvester = Harvester::new(config, pool.clone());
     harvester.run(rules).await

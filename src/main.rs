@@ -92,6 +92,8 @@ async fn main() -> anyhow::Result<()> {
                 data_dir,
                 endpoint: cfg.endpoint,
                 metadata_prefix: cfg.metadata_prefix,
+                oai_timeout: cfg.oai_timeout,
+                oai_retries: cfg.oai_retries,
             };
             let harvester = Harvester::new(config, pool);
             harvester.run(cfg.rules.map(|p| expand_path(&p))).await?;

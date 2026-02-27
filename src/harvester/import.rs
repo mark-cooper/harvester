@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use tokio::time::timeout;
 use tracing::info;
 
 use crate::oai::{OaiIndexStatus, OaiRecordImport, OaiRecordStatus};
@@ -16,16 +19,35 @@ struct ImportStats {
 }
 
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
+    let duration = Duration::from_secs(harvester.config.oai_timeout);
     let client = Client::new(&harvester.config.endpoint)?;
-    client.identify().await?;
+
+    timeout(duration, client.identify()).await.map_err(|_| {
+        anyhow::anyhow!(
+            "OAI identify timed out after {}s",
+            harvester.config.oai_timeout
+        )
+    })??;
 
     let args = ListIdentifiersArgs::new(&harvester.config.metadata_prefix);
-    let mut stream = client.list_identifiers(args).await?;
+    let mut stream = timeout(duration, client.list_identifiers(args))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "OAI list_identifiers timed out after {}s",
+                harvester.config.oai_timeout
+            )
+        })??;
 
     let mut batch = Vec::with_capacity(BATCH_SIZE);
     let mut total = ImportStats::default();
 
-    while let Some(response) = stream.try_next().await? {
+    while let Some(response) = timeout(duration, stream.try_next()).await.map_err(|_| {
+        anyhow::anyhow!(
+            "OAI list_identifiers page fetch timed out after {}s",
+            harvester.config.oai_timeout
+        )
+    })?? {
         if let Some(e) = response.error {
             return Err(anyhow::anyhow!("OAI-PMH error: {:?}", e));
         }

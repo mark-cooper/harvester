@@ -22,4 +22,12 @@ pub struct HarvesterArgs {
     /// XML scanning rules file
     #[arg(short, long, env = "RULES_FILE")]
     pub rules: Option<PathBuf>,
+
+    /// Timeout for individual OAI operations (seconds)
+    #[arg(long, default_value_t = 120, env = "OAI_TIMEOUT")]
+    pub oai_timeout: u64,
+
+    /// Max retries for transient OAI failures (per record)
+    #[arg(long, default_value_t = 0, env = "OAI_RETRIES")]
+    pub oai_retries: u32,
 }

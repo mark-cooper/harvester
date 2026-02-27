@@ -1,8 +1,10 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use futures::stream::{self, StreamExt};
 use oai_pmh::{Client, GetRecordArgs};
 use tokio::fs;
+use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::db::{
@@ -94,9 +96,35 @@ async fn download_record(
     harvester: &Harvester,
     record: &OaiRecordId,
 ) -> RecordResult {
-    let args = GetRecordArgs::new(&record.identifier, &harvester.config.metadata_prefix);
+    let duration = Duration::from_secs(harvester.config.oai_timeout);
+    let max_retries = harvester.config.oai_retries;
 
-    match client.get_record(args).await {
+    let result = {
+        let mut attempts = 0u32;
+        loop {
+            let args = GetRecordArgs::new(&record.identifier, &harvester.config.metadata_prefix);
+            match timeout(duration, client.get_record(args)).await {
+                Ok(result) => break result,
+                Err(_) if attempts < max_retries => {
+                    attempts += 1;
+                    warn!(
+                        "OAI get_record timed out for {}, retry {}/{}",
+                        record.identifier, attempts, max_retries
+                    );
+                    tokio::time::sleep(Duration::from_millis(500 * 2u64.pow(attempts - 1))).await;
+                }
+                Err(_) => {
+                    let message = format!(
+                        "OAI get_record timed out after {}s",
+                        harvester.config.oai_timeout
+                    );
+                    return mark_record_failed(harvester, record, &message).await;
+                }
+            }
+        }
+    };
+
+    match result {
         Ok(response) => match response.payload {
             Some(payload) => {
                 let metadata = &payload.record.metadata;

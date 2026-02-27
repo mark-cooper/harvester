@@ -7,6 +7,8 @@ pub struct OaiConfig {
     pub data_dir: PathBuf,
     pub endpoint: String,
     pub metadata_prefix: String,
+    pub oai_timeout: u64,
+    pub oai_retries: u32,
 }
 
 /// Record info needed for download and metadata extraction
