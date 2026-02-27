@@ -17,15 +17,15 @@ pub struct HarvesterArgs {
     pub endpoint: String,
 
     /// Base directory for downloads
-    #[arg(short, long, default_value = "data")]
+    #[arg(short, long, default_value = "data", env = "DATA_DIR")]
     pub dir: PathBuf,
 
     /// OAI metadata prefix
-    #[arg(short, long)]
+    #[arg(short, long, env = "METADATA_PREFIX")]
     pub metadata_prefix: String,
 
     /// XML scanning rules file
-    #[arg(short, long)]
+    #[arg(short, long, env = "RULES_FILE")]
     pub rules: Option<PathBuf>,
 }
 

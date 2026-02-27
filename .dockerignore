@@ -7,8 +7,6 @@
 .gitignore
 
 data
-fixtures
-scripts
 target
 tests
 

@@ -78,8 +78,25 @@ repository,repository/corpname,required
 ## DB reset
 
 ```bash
+# adjust envvar values as appropriate
 PGHOST=localhost PGUSER=admin PGPASSWORD=admin psql \
     -c "DROP DATABASE harvester;"
 
 ./scripts/init_db.sh
 ```
+
+## Docker
+
+```bash
+docker build -t harvester .
+
+docker run -it --rm --network host \
+    -v ./data:/app/data \
+    -e DATABASE_URL=postgres://harvester:harvester@localhost:5432/harvester \
+    -e DATA_DIR=/app/data \
+    -e METADATA_PREFIX=oai_ead \
+    -e RULES_FILE=/app/rules/default.txt \
+    harvester harvest https://test.archivesspace.org/oai
+```
+
+For rootless Docker, override the user to avoid bind mount permission issues i.e. add `--user root` which remaps to the host UID anyway.
