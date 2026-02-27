@@ -5,7 +5,8 @@ pub mod oai;
 mod summarizer;
 use std::path::{Path, PathBuf};
 
-pub use harvester::{Harvester, HarvesterArgs};
+pub use harvester::Harvester;
+pub use harvester::cli::HarvesterArgs;
 pub use indexer::arclight::ArcLightIndexer;
 pub use indexer::arclight::cli::{ArcLightArgs, ArcLightRetryArgs};
 pub use indexer::arclight::config::{

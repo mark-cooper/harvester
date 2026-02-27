@@ -1,3 +1,4 @@
+pub mod cli;
 mod download;
 mod import;
 mod metadata;
@@ -5,29 +6,9 @@ mod rules;
 
 use std::path::{self, PathBuf};
 
-use clap::Args;
-
 use crate::oai::OaiConfig;
 
 use sqlx::PgPool;
-
-#[derive(Debug, Args)]
-pub struct HarvesterArgs {
-    /// OAI endpoint url
-    pub endpoint: String,
-
-    /// Base directory for downloads
-    #[arg(short, long, default_value = "data", env = "DATA_DIR")]
-    pub dir: PathBuf,
-
-    /// OAI metadata prefix
-    #[arg(short, long, env = "METADATA_PREFIX")]
-    pub metadata_prefix: String,
-
-    /// XML scanning rules file
-    #[arg(short, long, env = "RULES_FILE")]
-    pub rules: Option<PathBuf>,
-}
 
 pub struct Harvester {
     config: OaiConfig,

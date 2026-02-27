@@ -62,6 +62,18 @@ async fn main() -> anyhow::Result<()> {
         Commands::Harvest(cfg) => {
             println!("Harvesting records from {}", cfg.endpoint);
 
+            if cfg.retry {
+                let params = db::RetryHarvestParams {
+                    endpoint: &cfg.endpoint,
+                    metadata_prefix: &cfg.metadata_prefix,
+                };
+                let result = db::do_retry_harvest_query(&pool, params).await?;
+                println!(
+                    "Reset {} failed record(s) to pending",
+                    result.rows_affected()
+                );
+            }
+
             let data_dir = path::absolute(expand_path(&cfg.dir))?;
 
             let config = OaiConfig {

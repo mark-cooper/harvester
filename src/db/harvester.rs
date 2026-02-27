@@ -23,6 +23,11 @@ pub struct RecordParsedParams<'a> {
     pub metadata: serde_json::Value,
 }
 
+pub struct RetryHarvestParams<'a> {
+    pub endpoint: &'a str,
+    pub metadata_prefix: &'a str,
+}
+
 /// Transition: `pending -> available`.
 pub async fn do_mark_download_success_query(
     pool: &PgPool,
@@ -128,6 +133,25 @@ pub async fn do_mark_metadata_success_query(
     .bind(params.metadata)
     .bind(OaiIndexStatus::Pending.as_str())
     .bind(OaiRecordStatus::Available.as_str())
+    .execute(pool)
+    .await
+}
+
+pub async fn do_retry_harvest_query(
+    pool: &PgPool,
+    params: RetryHarvestParams<'_>,
+) -> Result<PgQueryResult, Error> {
+    sqlx::query(
+        r#"
+        UPDATE oai_records
+        SET status = 'pending', message = '', last_checked_at = NOW()
+        WHERE endpoint = $1
+          AND metadata_prefix = $2
+          AND status = 'failed'
+        "#,
+    )
+    .bind(params.endpoint)
+    .bind(params.metadata_prefix)
     .execute(pool)
     .await
 }

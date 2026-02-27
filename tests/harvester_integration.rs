@@ -2,7 +2,10 @@ mod support;
 
 use std::{collections::HashMap, fs};
 
-use harvester::OaiRecordId;
+use harvester::{
+    OaiRecordId,
+    db::{RetryHarvestParams, do_retry_harvest_query},
+};
 use support::{
     DEFAULT_DATESTAMP, EAD_XML, GetRecordSpec, MockOaiConfig, acquire_test_lock,
     count_records_for_identifier, create_rules_file, create_temp_dir, create_temp_file,
@@ -133,6 +136,50 @@ async fn import_does_not_reset_failed_record() -> anyhow::Result<()> {
     assert_eq!(snapshot.status, "failed");
     assert_eq!(snapshot.datestamp, original_datestamp);
     assert_eq!(snapshot.version, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn retry_resets_failed_records_and_harvest_reprocesses_them() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+    let data_dir = create_temp_dir("retry-harvest")?;
+    let identifier = "record-retry";
+
+    let mut records = HashMap::new();
+    records.insert(
+        identifier.to_string(),
+        GetRecordSpec::Payload(EAD_XML.to_string()),
+    );
+    let server = start_mock_oai_server(MockOaiConfig {
+        headers: vec![header_spec(identifier, DEFAULT_DATESTAMP, None)],
+        records,
+    })
+    .await?;
+
+    insert_record(
+        &pool,
+        &server.endpoint,
+        identifier,
+        DEFAULT_DATESTAMP,
+        "failed",
+    )
+    .await?;
+
+    let result = do_retry_harvest_query(
+        &pool,
+        RetryHarvestParams {
+            endpoint: &server.endpoint,
+            metadata_prefix: support::METADATA_PREFIX,
+        },
+    )
+    .await?;
+    assert_eq!(result.rows_affected(), 1);
+
+    run_harvest(&pool, &server.endpoint, data_dir, None).await?;
+
+    let snapshot = fetch_record_snapshot(&pool, &server.endpoint, identifier).await?;
+    assert_eq!(snapshot.status, "available");
     Ok(())
 }
 
