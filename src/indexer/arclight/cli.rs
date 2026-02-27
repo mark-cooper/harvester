@@ -25,10 +25,6 @@ pub struct ArcLightArgs {
     #[arg(short, long, default_value_t = false)]
     pub preview: bool,
 
-    /// Repositories yaml file
-    #[arg(short, long, default_value = "config/repositories.yml")]
-    pub repository_file: PathBuf,
-
     /// Solr url
     #[arg(short, long, default_value = "http://127.0.0.1:8983/solr/arclight")]
     pub solr_url: String,

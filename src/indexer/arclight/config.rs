@@ -1,4 +1,5 @@
 use std::{
+    fs,
     path::{self, PathBuf},
     process::Command,
 };
@@ -22,7 +23,8 @@ pub struct ArcLightIndexerConfig {
 
 pub fn build_config(cfg: ArcLightArgs) -> anyhow::Result<ArcLightIndexerConfig> {
     ensure_traject_available()?;
-    let (configuration, data_dir, repository_file) = resolve_paths(&cfg)?;
+    let (configuration, data_dir) = resolve_paths(&cfg)?;
+    let repository_file = generate_repository_file(&cfg.repository, &cfg.oai_repository)?;
 
     Ok(ArcLightIndexerConfig {
         configuration,
@@ -45,10 +47,9 @@ fn ensure_traject_available() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resolve_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
+fn resolve_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBuf)> {
     let configuration = path::absolute(expand_path(&cfg.configuration))?;
     let data_dir = path::absolute(expand_path(&cfg.dir))?;
-    let repository_file = path::absolute(expand_path(&cfg.repository_file))?;
 
     if !configuration.is_file() {
         anyhow::bail!("traject configuration was not found");
@@ -58,9 +59,12 @@ fn resolve_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBuf, PathBu
         anyhow::bail!("base directory was not found");
     }
 
-    if !repository_file.is_file() {
-        anyhow::bail!("repositories configuration was not found");
-    }
+    Ok((configuration, data_dir))
+}
 
-    Ok((configuration, data_dir, repository_file))
+fn generate_repository_file(repository: &str, name: &str) -> anyhow::Result<PathBuf> {
+    let path = std::env::temp_dir().join("harvester-repositories.yml");
+    let content = format!("{}:\n  name: \"{}\"\n", repository, name);
+    fs::write(&path, content)?;
+    Ok(path)
 }
