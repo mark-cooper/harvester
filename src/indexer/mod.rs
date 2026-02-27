@@ -2,6 +2,7 @@ pub mod arclight;
 
 use futures::{StreamExt, future::BoxFuture, stream};
 use sqlx::PgPool;
+use tracing::{error, info, warn};
 
 use crate::{
     OaiRecordId,
@@ -99,10 +100,10 @@ pub async fn run<T: Indexer>(ctx: &IndexerContext, indexer: &T) -> anyhow::Resul
     let indexed = process_records(ctx, indexer, RecordPhase::Index).await?;
     let deleted = process_records(ctx, indexer, RecordPhase::Purge).await?;
 
-    println!("Indexed records: {}", indexed.succeeded);
-    println!("Deleted records: {}", deleted.succeeded);
-    println!("Failed index operations: {}", indexed.failed);
-    println!("Failed delete operations: {}", deleted.failed);
+    info!("Indexed records: {}", indexed.succeeded);
+    info!("Deleted records: {}", deleted.succeeded);
+    info!("Failed index operations: {}", indexed.failed);
+    info!("Failed delete operations: {}", deleted.failed);
 
     let total_failed = indexed.failed + deleted.failed;
     if total_failed > 0 {
@@ -163,7 +164,7 @@ async fn mark_success(
             RecordPhase::Index => "pending|index_failed->indexed",
             RecordPhase::Purge => "pending|purge_failed->purged",
         };
-        eprintln!(
+        warn!(
             "Skipped transition {} for {} (record is no longer in an expected state)",
             transition, record.identifier
         );
@@ -196,7 +197,7 @@ async fn mark_failure(
             RecordPhase::Index => "pending|index_failed->index_failed",
             RecordPhase::Purge => "pending|purge_failed->purge_failed",
         };
-        eprintln!(
+        warn!(
             "Skipped transition {} for {} (record is no longer in an expected state)",
             transition, record.identifier
         );
@@ -228,7 +229,7 @@ async fn process_records<T: Indexer>(
                     RecordPhase::Index => "index",
                     RecordPhase::Purge => "delete",
                 };
-                println!("Would {} record: {}", label, record.identifier);
+                info!("Would {} record: {}", label, record.identifier);
             }
             succeeded += batch.len();
         } else {
@@ -251,15 +252,15 @@ async fn process_records<T: Indexer>(
                         Ok(false) => {}
                         Err(e) => {
                             failed += 1;
-                            eprintln!("Failed to mark success for {}: {}", record.identifier, e);
+                            error!("Failed to mark success for {}: {}", record.identifier, e);
                         }
                     },
                     Err(e) => {
                         failed += 1;
                         let message = truncate_middle(&e.to_string(), 200, 200);
-                        eprintln!("Failed to process: {}", message);
+                        error!("Failed to process: {}", message);
                         if let Err(db_err) = mark_failure(ctx, &phase, record, &message).await {
-                            eprintln!(
+                            error!(
                                 "Failed to mark failure for {}: {}",
                                 record.identifier, db_err
                             );

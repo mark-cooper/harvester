@@ -1,5 +1,7 @@
 use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 
+use tracing::{error, info, warn};
+
 use crate::{
     db::{
         FetchRecordsParams, RecordFailureParams, RecordParsedParams,
@@ -90,7 +92,7 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
         }
     }
 
-    println!(
+    info!(
         "Extracted metadata for {} records (failed: {}, failed-to-mark: {})",
         total_processed, total_failed, total_failed_to_mark
     );
@@ -197,7 +199,7 @@ async fn handle_failure_mark_result(
         Ok(true) => *total_failed += 1,
         Ok(false) => *total_failed_to_mark += 1,
         Err(update_error) => {
-            eprintln!(
+            error!(
                 "Record {} failed but could not be marked failed (reason: {}; update error: {})",
                 identifier, message, update_error
             );
@@ -221,7 +223,7 @@ async fn mark_record_failed(
     match do_mark_metadata_failure_query(&harvester.pool, params).await {
         Ok(result) if result.rows_affected() == 1 => Ok(true),
         Ok(_) => {
-            eprintln!(
+            warn!(
                 "Skipped transition available->failed for {} (record is no longer available)",
                 identifier
             );
@@ -258,7 +260,7 @@ async fn update_record_metadata(
 
     let result = do_mark_metadata_success_query(&harvester.pool, params).await?;
     if result.rows_affected() == 0 {
-        eprintln!(
+        warn!(
             "Skipped transition available->parsed for {} (record is no longer available)",
             identifier
         );

@@ -6,6 +6,7 @@ use harvester::{
     HarvesterArgs, IndexRunOptions, IndexerContext, OaiConfig, build_arclight_config, db,
     expand_path, run_indexer,
 };
+use tracing::info;
 
 /// OAI-PMH harvester
 #[derive(Debug, Parser)]
@@ -15,6 +16,10 @@ struct Cli {
     /// Database connection URL
     #[arg(long, env = "DATABASE_URL")]
     database_url: String,
+
+    /// Maximum database connections
+    #[arg(long, default_value_t = 10, env = "DB_MAX_CONNECTIONS")]
+    db_max_connections: u32,
 
     #[command(subcommand)]
     command: Commands,
@@ -55,12 +60,19 @@ async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::from_filename_override(".env");
     let _ = dotenvy::from_filename_override(".env.local");
 
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let args = Cli::parse();
-    let pool = db::create_pool(&args.database_url).await?;
+    let pool = db::create_pool(&args.database_url, args.db_max_connections).await?;
 
     match args.command {
         Commands::Harvest(cfg) => {
-            println!("Harvesting records from {}", cfg.endpoint);
+            info!("Harvesting records from {}", cfg.endpoint);
 
             if cfg.retry {
                 let params = db::RetryHarvestParams {
@@ -68,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
                     metadata_prefix: &cfg.metadata_prefix,
                 };
                 let result = db::do_retry_harvest_query(&pool, params).await?;
-                println!(
+                info!(
                     "Reset {} failed record(s) to pending",
                     result.rows_affected()
                 );
@@ -94,13 +106,13 @@ async fn main() -> anyhow::Result<()> {
                     };
 
                     let result = db::do_reindex_state_query(&pool, params).await?;
-                    println!(
+                    info!(
                         "Requeued {} record(s) to pending index status",
                         result.rows_affected()
                     );
                 }
 
-                println!("Indexing records into {}", cfg.repository);
+                info!("Indexing records into {}", cfg.repository);
 
                 let ctx = IndexerContext::new(
                     pool,
@@ -117,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
                 run_indexer(&ctx, &indexer).await?;
             }
             ArcLightCommands::Retry(cfg) => {
-                println!(
+                info!(
                     "Retrying failed index records into {}",
                     cfg.arclight.repository
                 );

@@ -11,13 +11,15 @@ clap = { version = "4.5.56", features = ["derive", "env"] }
 csv = "1.4.0"
 futures = "0.3.31"
 oai-pmh = "0.4.0"
+quick-xml = "0.39.0"
+rand = "0.9.2"
 reqwest = "0.13.1"
+serde_json = "1.0.149"
+shellexpand = "3"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "macros", "migrate"] }
 tokio = { version = "1", features = ["full"] }
-quick-xml = "0.39.0"
-serde_json = "1.0.149"
-rand = "0.9.2"
-shellexpand = "3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package.metadata.sqlx]
 migrations = "migrations"

@@ -1,3 +1,5 @@
+use tracing::info;
+
 use crate::oai::{OaiIndexStatus, OaiRecordImport, OaiRecordStatus};
 
 use super::Harvester;
@@ -50,7 +52,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
         total.deleted += stats.deleted;
     }
 
-    println!(
+    info!(
         "Imported {} records (active: {}, deleted: {})",
         total.processed, total.imported, total.deleted
     );

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use futures::stream::{self, StreamExt};
 use oai_pmh::{Client, GetRecordArgs};
 use tokio::fs;
+use tracing::{error, info, warn};
 
 use crate::db::{
     FetchRecordsParams, RecordFailureParams, RecordTransitionParams,
@@ -58,7 +59,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
         }
     }
 
-    println!(
+    info!(
         "Downloaded {} records (failed: {}, failed-to-mark: {})",
         total_downloaded, total_failed, total_failed_to_mark
     );
@@ -110,7 +111,7 @@ async fn download_record(
                     Ok(true) => RecordResult::Downloaded,
                     Ok(false) => RecordResult::FailedToMark,
                     Err(error) => {
-                        eprintln!(
+                        error!(
                             "Record {} downloaded but could not be marked available: {}",
                             record.identifier, error
                         );
@@ -142,14 +143,14 @@ async fn mark_record_failed(
     match do_mark_download_failure_query(&harvester.pool, params).await {
         Ok(result) if result.rows_affected() == 1 => RecordResult::Failed,
         Ok(_) => {
-            eprintln!(
+            warn!(
                 "Skipped transition pending->failed for {} (record is no longer pending)",
                 record.identifier
             );
             RecordResult::FailedToMark
         }
         Err(error) => {
-            eprintln!(
+            error!(
                 "Record {} failed and could not be marked failed (reason: {}; update error: {})",
                 record.identifier, message, error
             );
@@ -170,7 +171,7 @@ async fn mark_record_available(
 
     let result = do_mark_download_success_query(&harvester.pool, params).await?;
     if result.rows_affected() == 0 {
-        eprintln!(
+        warn!(
             "Skipped transition pending->available for {} (record is no longer pending)",
             record.identifier
         );
