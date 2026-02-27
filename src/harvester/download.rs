@@ -39,6 +39,9 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     let mut total_failed_to_mark = 0usize;
 
     loop {
+        if harvester.is_shutdown() {
+            break;
+        }
         let params = FetchRecordsParams {
             endpoint: &harvester.config.endpoint,
             metadata_prefix: &harvester.config.metadata_prefix,

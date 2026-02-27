@@ -1,5 +1,8 @@
 pub mod arclight;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use futures::{StreamExt, future::BoxFuture, stream};
 use sqlx::PgPool;
 use tracing::{error, info, warn};
@@ -25,6 +28,7 @@ pub struct IndexerContext {
     oai_repository: String,
     run_options: IndexRunOptions,
     preview: bool,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl IndexerContext {
@@ -35,6 +39,7 @@ impl IndexerContext {
         oai_repository: String,
         run_options: IndexRunOptions,
         preview: bool,
+        shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
             pool,
@@ -43,7 +48,12 @@ impl IndexerContext {
             oai_repository,
             run_options,
             preview,
+            shutdown,
         }
+    }
+
+    fn is_shutdown(&self) -> bool {
+        self.shutdown.load(Ordering::Relaxed)
     }
 }
 
@@ -216,6 +226,9 @@ async fn process_records<T: Indexer>(
     let mut failed = 0usize;
 
     loop {
+        if ctx.is_shutdown() {
+            break;
+        }
         let batch = fetch_batch(ctx, &phase, last_identifier.as_deref()).await?;
         if batch.is_empty() {
             break;

@@ -1,6 +1,6 @@
 mod support;
 
-use std::{env, path::Path};
+use std::{env, path::Path, sync::Arc, sync::atomic::AtomicBool};
 
 use harvester::{
     ARCLIGHT_METADATA_PREFIX, ArcLightIndexer, ArcLightIndexerConfig, IndexRunOptions,
@@ -83,6 +83,7 @@ fn build_context(
         REPOSITORY.to_string(),
         run_options,
         preview,
+        Arc::new(AtomicBool::new(false)),
     )
 }
 

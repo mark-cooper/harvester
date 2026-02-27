@@ -48,6 +48,9 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
             harvester.config.oai_timeout
         )
     })?? {
+        if harvester.is_shutdown() {
+            break;
+        }
         if let Some(e) = response.error {
             return Err(anyhow::anyhow!("OAI-PMH error: {:?}", e));
         }

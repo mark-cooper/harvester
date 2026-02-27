@@ -1,4 +1,6 @@
 use std::path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand};
 use harvester::{
@@ -70,6 +72,14 @@ async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     let pool = db::create_pool(&args.database_url, args.db_max_connections).await?;
 
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        info!("Received interrupt, finishing current batch...");
+        shutdown_clone.store(true, Ordering::Relaxed);
+    });
+
     match args.command {
         Commands::Harvest(cfg) => {
             info!("Harvesting records from {}", cfg.endpoint);
@@ -95,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
                 oai_timeout: cfg.oai_timeout,
                 oai_retries: cfg.oai_retries,
             };
-            let harvester = Harvester::new(config, pool);
+            let harvester = Harvester::new(config, pool, shutdown.clone());
             harvester.run(cfg.rules.map(|p| expand_path(&p))).await?;
         }
         Commands::Index(IndexCommands::ArcLight(command)) => match command {
@@ -123,6 +133,7 @@ async fn main() -> anyhow::Result<()> {
                     cfg.oai_repository.clone(),
                     IndexRunOptions::pending_only(),
                     cfg.preview,
+                    shutdown.clone(),
                 );
 
                 let config = build_arclight_config(cfg)?;
@@ -143,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
                     cfg.arclight.oai_repository.clone(),
                     IndexRunOptions::failed_only(cfg.message_filter, cfg.max_attempts),
                     cfg.arclight.preview,
+                    shutdown.clone(),
                 );
 
                 let config = build_arclight_config(cfg.arclight)?;

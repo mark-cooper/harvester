@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Once, OnceLock,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -138,7 +138,7 @@ pub async fn run_harvest(
         oai_timeout: 10,
         oai_retries: 0,
     };
-    let harvester = Harvester::new(config, pool.clone());
+    let harvester = Harvester::new(config, pool.clone(), Arc::new(AtomicBool::new(false)));
     harvester.run(rules).await
 }
 
