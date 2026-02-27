@@ -26,20 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libyaml-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /gems
-
-COPY arclight/arclight.gemspec arclight/
-COPY arclight/lib/arclight/version.rb arclight/lib/arclight/
-
-# Install only the runtime gems we need for traject indexing.
-# The gemspec pulls in Rails/Blacklight as arclight dependencies — we need
-# those because the traject configs require arclight helper classes.
-RUN cat <<'GEMFILE' > Gemfile
-source 'https://rubygems.org'
-gemspec path: 'arclight'
-GEMFILE
-RUN bundle config set --local without 'development test' \
-    && bundle install --jobs 4
+RUN gem install arclight --no-document
 
 # Stage 3: Runtime image
 FROM ruby:4-slim-bookworm
