@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.100"
+anyhow = "1.0.102"
 dotenvy = "0.15"
-chrono = "0.4.43"
-clap = { version = "4.5.56", features = ["derive", "env"] }
+chrono = "0.4.44"
+clap = { version = "4.5.60", features = ["derive", "env"] }
 csv = "1.4.0"
-futures = "0.3.31"
+futures = "0.3.32"
 oai-pmh = "0.4.0"
-quick-xml = "0.39.0"
-rand = "0.9.2"
+quick-xml = "0.39.2"
+rand = "0.10.0"
 reqwest = "0.13.1"
 serde_json = "1.0.149"
 shellexpand = "3"
