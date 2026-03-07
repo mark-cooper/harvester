@@ -8,10 +8,9 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::db::{
-    FetchRecordsParams, RecordFailureParams, RecordTransitionParams,
-    do_mark_download_failure_query, do_mark_download_success_query, fetch_records_by_status,
+    FetchRecordsParams, RecordTransitionParams, apply_harvest_event, fetch_records_by_status,
 };
-use crate::oai::{OaiRecordId, OaiRecordStatus};
+use crate::oai::{HarvestEvent, OaiRecordId, OaiRecordStatus};
 
 use super::Harvester;
 
@@ -164,14 +163,14 @@ async fn mark_record_failed(
     record: &OaiRecordId,
     message: &str,
 ) -> RecordResult {
-    let params = RecordFailureParams {
+    let params = RecordTransitionParams {
         endpoint: &harvester.config.endpoint,
         metadata_prefix: &harvester.config.metadata_prefix,
         identifier: &record.identifier,
-        message,
     };
+    let event = HarvestEvent::DownloadFailed { message };
 
-    match do_mark_download_failure_query(&harvester.pool, params).await {
+    match apply_harvest_event(&harvester.pool, params, &event).await {
         Ok(result) if result.rows_affected() == 1 => RecordResult::Failed,
         Ok(_) => {
             warn!(
@@ -200,7 +199,7 @@ async fn mark_record_available(
         identifier: &record.identifier,
     };
 
-    let result = do_mark_download_success_query(&harvester.pool, params).await?;
+    let result = apply_harvest_event(&harvester.pool, params, &HarvestEvent::DownloadSucceeded).await?;
     if result.rows_affected() == 0 {
         warn!(
             "Skipped transition pending->available for {} (record is no longer pending)",

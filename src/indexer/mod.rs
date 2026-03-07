@@ -10,12 +10,11 @@ use tracing::{error, info, warn};
 use crate::{
     OaiRecordId,
     db::{
-        FetchIndexCandidatesParams, UpdateIndexFailureParams, UpdateIndexStatusParams,
-        do_mark_index_failure_query, do_mark_index_success_query, do_mark_purge_failure_query,
-        do_mark_purge_success_query, fetch_failed_records_for_indexing,
-        fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
-        fetch_pending_records_for_purging,
+        FetchIndexCandidatesParams, UpdateIndexStatusParams, apply_index_event,
+        fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
+        fetch_pending_records_for_indexing, fetch_pending_records_for_purging,
     },
+    oai::IndexEvent,
 };
 
 const BATCH_SIZE: usize = 100;
@@ -164,10 +163,12 @@ async fn mark_success(
         identifier: &record.identifier,
     };
 
-    let result = match phase {
-        RecordPhase::Index => do_mark_index_success_query(&ctx.pool, params).await?,
-        RecordPhase::Purge => do_mark_purge_success_query(&ctx.pool, params).await?,
+    let event = match phase {
+        RecordPhase::Index => IndexEvent::IndexSucceeded,
+        RecordPhase::Purge => IndexEvent::PurgeSucceeded,
     };
+
+    let result = apply_index_event(&ctx.pool, params, &event).await?;
 
     if result.rows_affected() == 0 {
         let transition = match phase {
@@ -190,17 +191,18 @@ async fn mark_failure(
     record: &OaiRecordId,
     message: &str,
 ) -> anyhow::Result<()> {
-    let params = UpdateIndexFailureParams {
+    let params = UpdateIndexStatusParams {
         endpoint: &ctx.endpoint,
         metadata_prefix: &ctx.metadata_prefix,
         identifier: &record.identifier,
-        message,
     };
 
-    let result = match phase {
-        RecordPhase::Index => do_mark_index_failure_query(&ctx.pool, params).await?,
-        RecordPhase::Purge => do_mark_purge_failure_query(&ctx.pool, params).await?,
+    let event = match phase {
+        RecordPhase::Index => IndexEvent::IndexFailed { message },
+        RecordPhase::Purge => IndexEvent::PurgeFailed { message },
     };
+
+    let result = apply_index_event(&ctx.pool, params, &event).await?;
 
     if result.rows_affected() == 0 {
         let transition = match phase {

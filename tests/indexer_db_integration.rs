@@ -3,12 +3,12 @@ mod support;
 use harvester::{
     OaiRecordId,
     db::{
-        FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexFailureParams,
-        UpdateIndexStatusParams, do_mark_index_failure_query, do_mark_index_success_query,
-        do_mark_purge_failure_query, do_mark_purge_success_query, do_reindex_state_query,
-        fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
-        fetch_pending_records_for_indexing, fetch_pending_records_for_purging,
+        FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexStatusParams,
+        apply_index_event, apply_reindex, fetch_failed_records_for_indexing,
+        fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
+        fetch_pending_records_for_purging,
     },
+    oai::IndexEvent,
 };
 use support::{
     DEFAULT_DATESTAMP, METADATA_PREFIX, acquire_test_lock, fetch_record_snapshot,
@@ -224,12 +224,14 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     )
     .await?;
 
-    do_mark_index_failure_query(
+    apply_index_event(
         &pool,
-        UpdateIndexFailureParams {
+        UpdateIndexStatusParams {
             endpoint: ENDPOINT,
             metadata_prefix: METADATA_PREFIX,
             identifier: "index-transition",
+        },
+        &IndexEvent::IndexFailed {
             message: "traject failed",
         },
     )
@@ -240,13 +242,14 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     assert_eq!(snapshot.index_message, "traject failed");
     assert!(!snapshot.indexed_at_set);
 
-    do_mark_index_success_query(
+    apply_index_event(
         &pool,
         UpdateIndexStatusParams {
             endpoint: ENDPOINT,
             metadata_prefix: METADATA_PREFIX,
             identifier: "index-transition",
         },
+        &IndexEvent::IndexSucceeded,
     )
     .await?;
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "index-transition").await?;
@@ -255,12 +258,14 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     assert!(snapshot.indexed_at_set);
     assert!(!snapshot.purged_at_set);
 
-    do_mark_purge_failure_query(
+    apply_index_event(
         &pool,
-        UpdateIndexFailureParams {
+        UpdateIndexStatusParams {
             endpoint: ENDPOINT,
             metadata_prefix: METADATA_PREFIX,
             identifier: "purge-transition",
+        },
+        &IndexEvent::PurgeFailed {
             message: "solr failed",
         },
     )
@@ -270,13 +275,14 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     assert_eq!(snapshot.index_attempts, 1);
     assert_eq!(snapshot.index_message, "solr failed");
 
-    do_mark_purge_success_query(
+    apply_index_event(
         &pool,
         UpdateIndexStatusParams {
             endpoint: ENDPOINT,
             metadata_prefix: METADATA_PREFIX,
             identifier: "purge-transition",
         },
+        &IndexEvent::PurgeSucceeded,
     )
     .await?;
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "purge-transition").await?;
@@ -330,7 +336,7 @@ async fn reindex_requeues_only_matching_repository_records() -> anyhow::Result<(
     )
     .await?;
 
-    let result = do_reindex_state_query(
+    let result = apply_reindex(
         &pool,
         ReindexStateParams {
             endpoint: ENDPOINT,

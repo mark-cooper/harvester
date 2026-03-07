@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use oai_pmh::client::response::Header;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct OaiConfig {
@@ -38,6 +39,14 @@ impl From<Header> for OaiRecordImport {
     fn from(value: Header) -> Self {
         let status = match value.status.as_deref() {
             Some("deleted") => OaiRecordStatus::Deleted,
+            Some(other) => {
+                warn!(
+                    identifier = %value.identifier,
+                    header_status = %other,
+                    "Unexpected OAI header status; defaulting to pending"
+                );
+                OaiRecordStatus::Pending
+            }
             _ => OaiRecordStatus::Pending,
         };
         Self {

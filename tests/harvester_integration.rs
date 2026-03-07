@@ -4,7 +4,7 @@ use std::{collections::HashMap, fs};
 
 use harvester::{
     OaiRecordId,
-    db::{RetryHarvestParams, do_retry_harvest_query},
+    db::{RetryHarvestParams, apply_harvest_retry},
 };
 use support::{
     DEFAULT_DATESTAMP, EAD_XML, GetRecordSpec, MockOaiConfig, acquire_test_lock,
@@ -166,7 +166,7 @@ async fn retry_resets_failed_records_and_harvest_reprocesses_them() -> anyhow::R
     )
     .await?;
 
-    let result = do_retry_harvest_query(
+    let result = apply_harvest_retry(
         &pool,
         RetryHarvestParams {
             endpoint: &server.endpoint,

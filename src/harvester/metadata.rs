@@ -4,11 +4,10 @@ use tracing::{error, info, warn};
 
 use crate::{
     db::{
-        FetchRecordsParams, RecordFailureParams, RecordParsedParams,
-        do_mark_metadata_failure_query, do_mark_metadata_success_query, fetch_records_by_status,
+        FetchRecordsParams, RecordTransitionParams, apply_harvest_event, fetch_records_by_status,
     },
     harvester::rules::RuleSet,
-    oai::OaiRecordStatus,
+    oai::{HarvestEvent, OaiRecordStatus},
 };
 
 use super::Harvester;
@@ -216,14 +215,14 @@ async fn mark_record_failed(
     identifier: &str,
     message: &str,
 ) -> anyhow::Result<bool> {
-    let params = RecordFailureParams {
+    let params = RecordTransitionParams {
         endpoint: &harvester.config.endpoint,
         metadata_prefix: &harvester.config.metadata_prefix,
         identifier,
-        message,
     };
+    let event = HarvestEvent::MetadataFailed { message };
 
-    match do_mark_metadata_failure_query(&harvester.pool, params).await {
+    match apply_harvest_event(&harvester.pool, params, &event).await {
         Ok(result) if result.rows_affected() == 1 => Ok(true),
         Ok(_) => {
             warn!(
@@ -254,14 +253,14 @@ async fn update_record_metadata(
     identifier: &str,
     metadata: serde_json::Value,
 ) -> anyhow::Result<bool> {
-    let params = RecordParsedParams {
+    let params = RecordTransitionParams {
         endpoint: &harvester.config.endpoint,
         metadata_prefix: &harvester.config.metadata_prefix,
         identifier,
-        metadata,
     };
+    let event = HarvestEvent::MetadataExtracted { metadata };
 
-    let result = do_mark_metadata_success_query(&harvester.pool, params).await?;
+    let result = apply_harvest_event(&harvester.pool, params, &event).await?;
     if result.rows_affected() == 0 {
         warn!(
             "Skipped transition available->parsed for {} (record is no longer available)",

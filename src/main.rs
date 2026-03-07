@@ -89,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
                     endpoint: &cfg.endpoint,
                     metadata_prefix: &cfg.metadata_prefix,
                 };
-                let result = db::do_retry_harvest_query(&pool, params).await?;
+                let result = db::apply_harvest_retry(&pool, params).await?;
                 info!(
                     "Reset {} failed record(s) to pending",
                     result.rows_affected()
@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
                         oai_repository: &cfg.oai_repository,
                     };
 
-                    let result = db::do_reindex_state_query(&pool, params).await?;
+                    let result = db::apply_reindex(&pool, params).await?;
                     info!(
                         "Requeued {} record(s) to pending index status",
                         result.rows_affected()
