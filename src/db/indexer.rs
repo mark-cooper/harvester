@@ -398,7 +398,10 @@ pub async fn apply_reindex(
         unreachable!("ReindexRequested always produces BatchReset")
     };
 
-    let eligible: Vec<&str> = eligible_record_statuses.iter().map(|s| s.as_str()).collect();
+    let eligible: Vec<&str> = eligible_record_statuses
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
 
     sqlx::query(
         r#"

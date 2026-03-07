@@ -93,11 +93,9 @@ pub async fn apply_harvest_event(
             .execute(pool)
             .await
         }
-        HarvestEvent::HarvestRetryRequested => {
-            return Err(sqlx::Error::Protocol(
-                "HarvestRetryRequested is a batch operation; use apply_harvest_retry()".into(),
-            ));
-        }
+        HarvestEvent::HarvestRetryRequested => Err(sqlx::Error::Protocol(
+            "HarvestRetryRequested is a batch operation; use apply_harvest_retry()".into(),
+        )),
     }
 }
 

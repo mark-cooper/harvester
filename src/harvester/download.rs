@@ -199,7 +199,8 @@ async fn mark_record_available(
         identifier: &record.identifier,
     };
 
-    let result = apply_harvest_event(&harvester.pool, params, &HarvestEvent::DownloadSucceeded).await?;
+    let result =
+        apply_harvest_event(&harvester.pool, params, &HarvestEvent::DownloadSucceeded).await?;
     if result.rows_affected() == 0 {
         warn!(
             "Skipped transition pending->available for {} (record is no longer pending)",

@@ -129,10 +129,6 @@ impl std::fmt::Display for OaiIndexStatus {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Event-driven transition model
-// ---------------------------------------------------------------------------
-
 /// Events that drive `oai_records.status` transitions.
 pub enum HarvestEvent<'a> {
     DownloadSucceeded,

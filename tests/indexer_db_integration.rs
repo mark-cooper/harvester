@@ -3,10 +3,9 @@ mod support;
 use harvester::{
     OaiRecordId,
     db::{
-        FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexStatusParams,
-        apply_index_event, apply_reindex, fetch_failed_records_for_indexing,
-        fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
-        fetch_pending_records_for_purging,
+        FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexStatusParams, apply_index_event,
+        apply_reindex, fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
+        fetch_pending_records_for_indexing, fetch_pending_records_for_purging,
     },
     oai::IndexEvent,
 };
