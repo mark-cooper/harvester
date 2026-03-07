@@ -31,28 +31,20 @@ impl OaiRecordId {
 pub struct OaiRecordImport {
     pub identifier: String,
     pub datestamp: String,
-    pub status: String,
-}
-
-impl OaiRecordImport {
-    pub fn new(identifier: String, datestamp: String, status: String) -> Self {
-        Self {
-            identifier,
-            datestamp,
-            status,
-        }
-    }
+    pub status: OaiRecordStatus,
 }
 
 impl From<Header> for OaiRecordImport {
     fn from(value: Header) -> Self {
-        Self::new(
-            value.identifier,
-            value.datestamp,
-            value
-                .status
-                .unwrap_or_else(|| OaiRecordStatus::Pending.to_string()),
-        )
+        let status = match value.status.as_deref() {
+            Some("deleted") => OaiRecordStatus::Deleted,
+            _ => OaiRecordStatus::Pending,
+        };
+        Self {
+            identifier: value.identifier,
+            datestamp: value.datestamp,
+            status,
+        }
     }
 }
 
@@ -125,5 +117,152 @@ impl OaiIndexStatus {
 impl std::fmt::Display for OaiIndexStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Event-driven transition model
+// ---------------------------------------------------------------------------
+
+/// Events that drive `oai_records.status` transitions.
+pub enum HarvestEvent<'a> {
+    DownloadSucceeded,
+    DownloadFailed { message: &'a str },
+    MetadataExtracted { metadata: serde_json::Value },
+    MetadataFailed { message: &'a str },
+    HarvestRetryRequested,
+}
+
+/// Events that drive `oai_records.index_status` transitions.
+pub enum IndexEvent<'a> {
+    IndexSucceeded,
+    IndexFailed { message: &'a str },
+    PurgeSucceeded,
+    PurgeFailed { message: &'a str },
+    ReindexRequested,
+}
+
+pub struct HarvestTransition {
+    pub from: OaiRecordStatus,
+    pub to: OaiRecordStatus,
+}
+
+impl HarvestEvent<'_> {
+    pub fn transition(&self) -> HarvestTransition {
+        match self {
+            Self::DownloadSucceeded => HarvestTransition {
+                from: OaiRecordStatus::Pending,
+                to: OaiRecordStatus::Available,
+            },
+            Self::DownloadFailed { .. } => HarvestTransition {
+                from: OaiRecordStatus::Pending,
+                to: OaiRecordStatus::Failed,
+            },
+            Self::MetadataExtracted { .. } => HarvestTransition {
+                from: OaiRecordStatus::Available,
+                to: OaiRecordStatus::Parsed,
+            },
+            Self::MetadataFailed { .. } => HarvestTransition {
+                from: OaiRecordStatus::Available,
+                to: OaiRecordStatus::Failed,
+            },
+            Self::HarvestRetryRequested => HarvestTransition {
+                from: OaiRecordStatus::Failed,
+                to: OaiRecordStatus::Pending,
+            },
+        }
+    }
+}
+
+pub enum IndexTransition {
+    /// Single-record: requires a specific record status, accepts either of two
+    /// index predecessor states, transitions to `to`.
+    SingleRecord {
+        required_status: OaiRecordStatus,
+        from: (OaiIndexStatus, OaiIndexStatus),
+        to: OaiIndexStatus,
+    },
+    /// Batch reset: matches records whose status is in `eligible_record_statuses`,
+    /// resets index_status to `to` regardless of current index_status.
+    BatchReset {
+        eligible_record_statuses: &'static [OaiRecordStatus],
+        to: OaiIndexStatus,
+    },
+}
+
+impl IndexEvent<'_> {
+    pub fn transition(&self) -> IndexTransition {
+        match self {
+            Self::IndexSucceeded => IndexTransition::SingleRecord {
+                required_status: OaiRecordStatus::Parsed,
+                from: (OaiIndexStatus::Pending, OaiIndexStatus::IndexFailed),
+                to: OaiIndexStatus::Indexed,
+            },
+            Self::IndexFailed { .. } => IndexTransition::SingleRecord {
+                required_status: OaiRecordStatus::Parsed,
+                from: (OaiIndexStatus::Pending, OaiIndexStatus::IndexFailed),
+                to: OaiIndexStatus::IndexFailed,
+            },
+            Self::PurgeSucceeded => IndexTransition::SingleRecord {
+                required_status: OaiRecordStatus::Deleted,
+                from: (OaiIndexStatus::Pending, OaiIndexStatus::PurgeFailed),
+                to: OaiIndexStatus::Purged,
+            },
+            Self::PurgeFailed { .. } => IndexTransition::SingleRecord {
+                required_status: OaiRecordStatus::Deleted,
+                from: (OaiIndexStatus::Pending, OaiIndexStatus::PurgeFailed),
+                to: OaiIndexStatus::PurgeFailed,
+            },
+            Self::ReindexRequested => IndexTransition::BatchReset {
+                eligible_record_statuses: &[OaiRecordStatus::Parsed, OaiRecordStatus::Deleted],
+                to: OaiIndexStatus::Pending,
+            },
+        }
+    }
+}
+
+/// Compile-time check: adding a new OaiRecordStatus variant without updating
+/// transitions causes a non-exhaustive match error here.
+const fn _assert_status_coverage() {
+    let statuses = [
+        OaiRecordStatus::Available,
+        OaiRecordStatus::Deleted,
+        OaiRecordStatus::Failed,
+        OaiRecordStatus::Parsed,
+        OaiRecordStatus::Pending,
+    ];
+    let mut i = 0;
+    while i < statuses.len() {
+        match statuses[i] {
+            OaiRecordStatus::Available => {}
+            OaiRecordStatus::Deleted => {}
+            OaiRecordStatus::Failed => {}
+            OaiRecordStatus::Parsed => {}
+            OaiRecordStatus::Pending => {}
+        }
+        i += 1;
+    }
+}
+
+/// Compile-time check: adding a new OaiIndexStatus variant without updating
+/// transitions causes a non-exhaustive match error here.
+const fn _assert_index_status_coverage() {
+    let statuses = [
+        OaiIndexStatus::IndexFailed,
+        OaiIndexStatus::Indexed,
+        OaiIndexStatus::Pending,
+        OaiIndexStatus::Purged,
+        OaiIndexStatus::PurgeFailed,
+    ];
+    let mut i = 0;
+    while i < statuses.len() {
+        match statuses[i] {
+            OaiIndexStatus::IndexFailed => {}
+            OaiIndexStatus::Indexed => {}
+            OaiIndexStatus::Pending => {}
+            OaiIndexStatus::Purged => {}
+            OaiIndexStatus::PurgeFailed => {}
+        }
+        i += 1;
     }
 }
