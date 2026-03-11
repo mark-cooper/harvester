@@ -19,12 +19,12 @@ RUN cargo build --release
 FROM ruby:4-slim-bookworm AS gems
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    libxml2-dev \
-    libxslt-dev \
-    libyaml-dev \
-    && rm -rf /var/lib/apt/lists/*
+  build-essential \
+  git \
+  libxml2-dev \
+  libxslt-dev \
+  libyaml-dev \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN gem install arclight --no-document
 
@@ -32,12 +32,13 @@ RUN gem install arclight --no-document
 FROM ruby:4-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    libxml2 \
-    libxslt1.1 \
-    ca-certificates \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+  libpq5 \
+  libxml2 \
+  libxslt1.1 \
+  ca-certificates \
+  curl \
+  postgresql-client \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/cargo/bin/sqlx /usr/local/bin/sqlx
 COPY --from=builder /build/target/release/harvester /usr/local/bin/harvester
@@ -45,10 +46,11 @@ COPY --from=gems /usr/local/bundle /usr/local/bundle
 
 COPY fixtures/rules.txt /app/rules/default.txt
 COPY migrations/ /app/migrations/
+COPY scripts/init_db.sh /app/scripts/init_db.sh
 COPY traject/ /app/traject/
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /app/scripts/init_db.sh
 
 RUN mkdir -p /app/data && chown -R 1000:1000 /app
 USER 1000:1000

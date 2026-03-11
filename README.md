@@ -15,18 +15,12 @@ mise run gems
 The harvester requires a postgres connection. The default connection config is in `.env` but can be overriden by `.env.local`. To setup:
 
 ```bash
-cargo install --version="~0.8" sqlx-cli \
-    --no-default-features \
-    --features rustls,postgres
-
-# adjust envvar values as appropriate
-PGHOST=localhost PGUSER=admin PGPASSWORD=admin psql \
-    -c "CREATE ROLE harvester WITH CREATEDB LOGIN PASSWORD 'harvester';"
-
-./scripts/init_db.sh
+docker compose up -d postgres postgrest
 ```
 
-This will create the database.
+This initializes:
+- `harvester` database owned by `admin`
+- `harvester_reader` role for PostgREST with read access on `public` tables (including future tables)
 
 ## Running locally
 
@@ -98,23 +92,36 @@ PGHOST=localhost PGUSER=admin PGPASSWORD=admin psql \
 ## Docker
 
 ```bash
-docker build -t harvester .
+# start postgres + postgrest
+docker compose up -d postgres postgrest
 
-docker run -it --rm --network host \
-    -v ./data:/app/data \
-    -e DATABASE_URL=postgres://harvester:harvester@localhost:5432/harvester \
-    -e DATA_DIR=/app/data \
-    -e METADATA_PREFIX=oai_ead \
-    -e RULES_FILE=/app/rules/default.txt \
-    harvester harvest https://test.archivesspace.org/oai
+# build harvester image via compose
+docker compose build harvester
 
-# this requires a running instance of arclight with appropriate repositories.yml
-docker run -it --rm --network host \
-    -v ./data:/app/data \
-    -e DATABASE_URL=postgres://harvester:harvester@localhost:5432/harvester \
-    -e DATA_DIR=/app/data \
-    -e SOLR_URL=http://127.0.0.1:8983/solr/arclight \
-    harvester index arclight run "allen-doe-research-center" "https://test.archivesspace.org/oai" "Allen Doe Research Center"
+# run harvest (uses defaults from .env)
+docker compose run --rm harvester harvest https://test.archivesspace.org/oai
+
+# run index (override SOLR_URL as needed)
+docker compose run --rm \
+    -e SOLR_URL=http://host.docker.internal:8983/solr/arclight \
+    harvester index arclight run \
+    "allen-doe-research-center" \
+    "https://test.archivesspace.org/oai" \
+    "Allen Doe Research Center"
 ```
 
-For rootless Docker, override the user to avoid bind mount permission issues i.e. add `--user root` which remaps to the host UID anyway.
+Override any default with `-e KEY=value` on `docker compose run`.
+
+For rootless Docker, if bind mount permissions fail, add `--user root` to `docker compose run` commands.
+
+## PostgREST
+
+- [http://localhost:3000/oai_records](http://localhost:3000/oai_records)
+
+If you get an error like:
+
+```json
+{"code":"PGRST205","details":null,"hint":null,"message":"Could not find the table 'public.oai_records' in the schema cache"}
+```
+
+Run `docker compose restart postgrest`.

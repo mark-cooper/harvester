@@ -1,15 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 case "${1:-}" in
-  db-setup)
-    echo "Creating database (if it does not exist)..."
-    sqlx database create --database-url "$DATABASE_URL"
-    echo "Running migrations..."
-    sqlx migrate run --database-url "$DATABASE_URL" --source /app/migrations
-    echo "Database setup complete."
-    ;;
-  *)
-    exec harvester "$@"
-    ;;
+db-setup)
+  : "${DATABASE_URL:?DATABASE_URL must be set for db-setup}"
+  echo "Running database role/privilege setup..."
+  /app/scripts/init_db.sh
+  echo "Database setup complete."
+  ;;
+*)
+  exec harvester "$@"
+  ;;
 esac
