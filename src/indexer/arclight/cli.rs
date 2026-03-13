@@ -25,6 +25,18 @@ pub struct ArcLightArgs {
     #[arg(short, long, default_value_t = false)]
     pub preview: bool,
 
+    /// Retry failed indexing attempts
+    #[arg(long, default_value_t = false, conflicts_with = "reindex")]
+    pub retry: bool,
+
+    /// Optional substring filter on failed index message
+    #[arg(long, requires = "retry")]
+    pub message_filter: Option<String>,
+
+    /// Skip failed records at/above this attempt count
+    #[arg(long, requires = "retry")]
+    pub max_attempts: Option<i32>,
+
     /// Solr url
     #[arg(
         short,
@@ -43,20 +55,6 @@ pub struct ArcLightArgs {
     pub solr_commit_within_ms: u64,
 
     /// Reset index state to pending before running (reindex all parsed/deleted records)
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, conflicts_with = "retry")]
     pub reindex: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct ArcLightRetryArgs {
-    #[command(flatten)]
-    pub arclight: ArcLightArgs,
-
-    /// Optional substring filter on failed index message
-    #[arg(long)]
-    pub message_filter: Option<String>,
-
-    /// Skip failed records at/above this attempt count
-    #[arg(long)]
-    pub max_attempts: Option<i32>,
 }

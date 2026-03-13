@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand};
 use harvester::{
-    ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, ArcLightRetryArgs, Harvester,
-    HarvesterArgs, IndexRunOptions, IndexerContext, OaiConfig, build_arclight_config, db,
-    expand_path, run_indexer,
+    ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, Harvester, HarvesterArgs,
+    IndexRunOptions, IndexerContext, OaiConfig, build_arclight_config, db, expand_path,
+    run_indexer,
 };
 use tracing::info;
 
@@ -41,19 +41,8 @@ enum Commands {
 #[derive(Debug, Subcommand)]
 enum IndexCommands {
     /// ArcLight index operations
-    #[command(name = "arclight", subcommand)]
-    ArcLight(ArcLightCommands),
-}
-
-#[derive(Debug, Subcommand)]
-enum ArcLightCommands {
-    /// Index ready records (pending index state)
-    #[command(name = "run", arg_required_else_help = true)]
-    Run(ArcLightArgs),
-
-    /// Retry only failed index/purge records
-    #[command(name = "retry", arg_required_else_help = true)]
-    Retry(ArcLightRetryArgs),
+    #[command(name = "arclight")]
+    ArcLight(ArcLightArgs),
 }
 
 #[tokio::main]
@@ -108,61 +97,44 @@ async fn main() -> anyhow::Result<()> {
             let harvester = Harvester::new(config, pool, shutdown.clone());
             harvester.run(cfg.rules.map(|p| expand_path(&p))).await?;
         }
-        Commands::Index(IndexCommands::ArcLight(command)) => match command {
-            ArcLightCommands::Run(cfg) => {
-                if cfg.reindex {
-                    let params = db::ReindexStateParams {
-                        endpoint: &cfg.oai_endpoint,
-                        metadata_prefix: ARCLIGHT_METADATA_PREFIX,
-                        oai_repository: &cfg.oai_repository,
-                    };
+        Commands::Index(IndexCommands::ArcLight(cfg)) => {
+            if cfg.reindex {
+                let params = db::ReindexStateParams {
+                    endpoint: &cfg.oai_endpoint,
+                    metadata_prefix: ARCLIGHT_METADATA_PREFIX,
+                    oai_repository: &cfg.oai_repository,
+                };
 
-                    let result = db::apply_reindex(&pool, params).await?;
-                    info!(
-                        "Requeued {} record(s) to pending index status",
-                        result.rows_affected()
-                    );
-                }
-
-                info!("Indexing records into {}", cfg.repository);
-
-                let ctx = IndexerContext::new(
-                    pool,
-                    cfg.oai_endpoint.clone(),
-                    ARCLIGHT_METADATA_PREFIX.to_string(),
-                    cfg.oai_repository.clone(),
-                    IndexRunOptions::pending_only(),
-                    cfg.preview,
-                    shutdown.clone(),
-                );
-
-                let config = build_arclight_config(cfg)?;
-                let indexer = ArcLightIndexer::new(config);
-
-                run_indexer(&ctx, &indexer).await?;
-            }
-            ArcLightCommands::Retry(cfg) => {
+                let result = db::apply_reindex(&pool, params).await?;
                 info!(
-                    "Retrying failed index records into {}",
-                    cfg.arclight.repository
+                    "Requeued {} record(s) to pending index status",
+                    result.rows_affected()
                 );
-
-                let ctx = IndexerContext::new(
-                    pool,
-                    cfg.arclight.oai_endpoint.clone(),
-                    ARCLIGHT_METADATA_PREFIX.to_string(),
-                    cfg.arclight.oai_repository.clone(),
-                    IndexRunOptions::failed_only(cfg.message_filter, cfg.max_attempts),
-                    cfg.arclight.preview,
-                    shutdown.clone(),
-                );
-
-                let config = build_arclight_config(cfg.arclight)?;
-                let indexer = ArcLightIndexer::new(config);
-
-                run_indexer(&ctx, &indexer).await?;
             }
-        },
+
+            let run_option = if cfg.retry {
+                IndexRunOptions::failed_only(cfg.message_filter.clone(), cfg.max_attempts)
+            } else {
+                IndexRunOptions::pending_only()
+            };
+
+            info!("Indexing records into {}", cfg.repository);
+
+            let ctx = IndexerContext::new(
+                pool,
+                cfg.oai_endpoint.clone(),
+                ARCLIGHT_METADATA_PREFIX.to_string(),
+                cfg.oai_repository.clone(),
+                run_option,
+                cfg.preview,
+                shutdown.clone(),
+            );
+
+            let config = build_arclight_config(cfg)?;
+            let indexer = ArcLightIndexer::new(config);
+
+            run_indexer(&ctx, &indexer).await?;
+        }
     }
 
     Ok(())
