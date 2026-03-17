@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use clap::{Parser, Subcommand};
 use harvester::{
     ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, Harvester, HarvesterArgs,
-    IndexRunOptions, IndexerContext, OaiConfig, build_arclight_config, db, expand_path,
-    run_indexer,
+    IndexRunOptions, IndexerContext, OaiConfig, build_arclight_config,
+    db::{self, ReindexStateParams, RetryHarvestParams},
+    expand_path, run_indexer,
 };
 use tracing::info;
 
@@ -74,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
             info!("Harvesting records from {}", cfg.endpoint);
 
             if cfg.retry {
-                let params = db::RetryHarvestParams {
+                let params = RetryHarvestParams {
                     endpoint: &cfg.endpoint,
                     metadata_prefix: &cfg.metadata_prefix,
                 };
@@ -99,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Index(IndexCommands::ArcLight(cfg)) => {
             if cfg.reindex {
-                let params = db::ReindexStateParams {
+                let params = ReindexStateParams {
                     endpoint: &cfg.oai_endpoint,
                     metadata_prefix: ARCLIGHT_METADATA_PREFIX,
                     oai_repository: &cfg.oai_repository,

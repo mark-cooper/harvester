@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 
 use std::{
+    io,
     process::{Output, Stdio},
     time::Duration,
 };
@@ -125,12 +126,12 @@ impl ArcLightIndexer {
         let stdout_task = tokio::spawn(async move {
             let mut buf = Vec::new();
             stdout.read_to_end(&mut buf).await?;
-            Ok::<Vec<u8>, std::io::Error>(buf)
+            Ok::<Vec<u8>, io::Error>(buf)
         });
         let stderr_task = tokio::spawn(async move {
             let mut buf = Vec::new();
             stderr.read_to_end(&mut buf).await?;
-            Ok::<Vec<u8>, std::io::Error>(buf)
+            Ok::<Vec<u8>, io::Error>(buf)
         });
 
         let status = match timeout(self.timeout_duration(), child.wait()).await {

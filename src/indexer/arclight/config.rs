@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     path::{self, PathBuf},
     process::Command,
 };
@@ -63,7 +63,7 @@ fn resolve_paths(cfg: &ArcLightArgs) -> anyhow::Result<(PathBuf, PathBuf)> {
 }
 
 fn generate_repository_file(repository: &str, name: &str) -> anyhow::Result<PathBuf> {
-    let path = std::env::temp_dir().join("harvester-repositories.yml");
+    let path = env::temp_dir().join("harvester-repositories.yml");
     let content = format!("{}:\n  name: \"{}\"\n", repository, name);
     fs::write(&path, content)?;
     Ok(path)

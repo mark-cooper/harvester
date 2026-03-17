@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 
 use oai_pmh::client::response::Header;
@@ -88,8 +89,8 @@ impl OaiRecordStatus {
     }
 }
 
-impl std::fmt::Display for OaiRecordStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for OaiRecordStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
 }
@@ -123,8 +124,8 @@ impl OaiIndexStatus {
     }
 }
 
-impl std::fmt::Display for OaiIndexStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for OaiIndexStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
 }

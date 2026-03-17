@@ -1,6 +1,13 @@
 mod support;
 
-use std::{env, path::Path, sync::Arc, sync::atomic::AtomicBool};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    sync::Arc,
+    sync::atomic::AtomicBool,
+};
+
+use sqlx::PgPool;
 
 use harvester::{
     ARCLIGHT_METADATA_PREFIX, ArcLightIndexer, ArcLightIndexerConfig, IndexRunOptions,
@@ -55,9 +62,9 @@ fn prepend_path(dir: &Path) -> EnvVarGuard {
 }
 
 fn build_config(
-    configuration: std::path::PathBuf,
-    data_dir: std::path::PathBuf,
-    repository_file: std::path::PathBuf,
+    configuration: PathBuf,
+    data_dir: PathBuf,
+    repository_file: PathBuf,
     solr_url: String,
 ) -> ArcLightIndexerConfig {
     ArcLightIndexerConfig {
@@ -71,11 +78,7 @@ fn build_config(
     }
 }
 
-fn build_context(
-    pool: sqlx::PgPool,
-    run_options: IndexRunOptions,
-    preview: bool,
-) -> IndexerContext {
+fn build_context(pool: PgPool, run_options: IndexRunOptions, preview: bool) -> IndexerContext {
     IndexerContext::new(
         pool,
         ENDPOINT.to_string(),

@@ -1,4 +1,12 @@
-use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufReader, Read},
+    path::PathBuf,
+};
+
+use quick_xml::{Reader, escape, events::Event};
+use serde_json::{Map, Value};
 
 use tracing::{error, info, warn};
 
@@ -101,12 +109,7 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
     Ok(())
 }
 
-fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_json::Value> {
-    use quick_xml::Reader;
-    use quick_xml::escape::resolve_predefined_entity;
-    use quick_xml::events::Event;
-    use std::io::BufReader;
-
+fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<Value> {
     let buf_reader = BufReader::new(reader);
     let mut reader = Reader::from_reader(buf_reader);
     let mut result: HashMap<String, Vec<String>> = HashMap::new();
@@ -143,7 +146,7 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_
                 let entity = e
                     .decode()
                     .map_err(|err| anyhow::anyhow!("XML decode error: {}", err))?;
-                let resolved = resolve_predefined_entity(&entity).unwrap_or(" ");
+                let resolved = escape::resolve_predefined_entity(&entity).unwrap_or(" ");
                 for depth in 1..=stack.len() {
                     text_at_depth.entry(depth).or_default().push_str(resolved);
                 }
@@ -182,12 +185,12 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<serde_
     }
 
     // Convert to JSON with values as arrays
-    let json_map: serde_json::Map<_, _> = result
+    let json_map: Map<_, _> = result
         .into_iter()
         .map(|(k, v)| (k, serde_json::json!(v)))
         .collect();
 
-    Ok(serde_json::Value::Object(json_map))
+    Ok(Value::Object(json_map))
 }
 
 async fn handle_failure_mark_result(
@@ -251,7 +254,7 @@ fn stack_matches_path(stack: &[String], path: &[String]) -> bool {
 async fn update_record_metadata(
     harvester: &Harvester,
     identifier: &str,
-    metadata: serde_json::Value,
+    metadata: Value,
 ) -> anyhow::Result<bool> {
     let params = RecordTransitionParams {
         endpoint: &harvester.config.endpoint,
