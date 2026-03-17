@@ -40,15 +40,16 @@ cargo run -- index arclight run \
 ```
 
 This uses a range of default values so will only work if your setup is aligned.
-For all options run: `cargo run -- index arclight run --help`.
+For all options run: `cargo run -- index arclight --help`.
 
 Retry failed index operations for a specific endpoint/repository pair:
 
 ```bash
-cargo run -- index arclight retry \
+cargo run -- index arclight \
     allen-doe-research-center \
     "https://test.archivesspace.org/oai" \
     "Allen Doe Research Center" \
+    --retry \
     --message-filter "timed out" \
     --max-attempts 5
 ```
@@ -56,12 +57,12 @@ cargo run -- index arclight retry \
 Requeue all parsed/deleted records for a specific endpoint/repository pair:
 
 ```bash
-cargo run -- index arclight reindex \
+cargo run -- index arclight \
     "https://test.archivesspace.org/oai" \
-    "Allen Doe Research Center"
+    "Allen Doe Research Center" \
+    --reindex
 ```
 
-For all options run: `cargo run -- index arclight retry --help` and `cargo run -- index arclight reindex --help`.
 
 ### Rules for metadata extraction
 
@@ -104,7 +105,7 @@ docker compose run --rm harvester harvest https://test.archivesspace.org/oai
 # run index (override SOLR_URL as needed)
 docker compose run --rm \
     -e SOLR_URL=http://host.docker.internal:8983/solr/arclight \
-    harvester index arclight run \
+    harvester index arclight \
     "allen-doe-research-center" \
     "https://test.archivesspace.org/oai" \
     "Allen Doe Research Center"
