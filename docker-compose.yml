@@ -2,7 +2,7 @@ services:
   harvester:
     build:
       context: .
-    image: harvester:local
+    image: harvester:latest
     depends_on:
       postgres:
         condition: service_healthy

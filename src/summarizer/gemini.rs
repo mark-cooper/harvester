@@ -1,6 +1,6 @@
 use reqwest::Client;
 
-use crate::summarizer::Summarizer;
+use super::Summarizer;
 
 const DEFAULT_MODEL: &str = "gemini-2.5-flash";
 
