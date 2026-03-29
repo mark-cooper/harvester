@@ -1,8 +1,10 @@
+#![allow(dead_code)] // Summarizer integration is still WIP.
+
 use sqlx::{Error, PgPool};
 
 use crate::oai::{OaiRecordId, OaiRecordStatus};
 
-pub async fn fetch_record_for_summary(
+pub(crate) async fn fetch_record_for_summary(
     pool: &PgPool,
     endpoint: &str,
     metadata_prefix: &str,

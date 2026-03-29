@@ -1,20 +1,28 @@
-pub mod harvester;
-pub mod indexer;
-pub mod summarizer;
+mod harvester;
+mod indexer;
+mod summarizer;
 
-pub use harvester::*;
-pub use indexer::*;
+pub(crate) use harvester::{ImportParams, ImportStats, batch_upsert_records};
+pub use harvester::{
+    RecordTransitionParams, RetryHarvestParams, apply_harvest_event, apply_harvest_retry,
+};
+pub use indexer::{
+    FetchIndexCandidatesParams, UpdateIndexStatusParams, apply_index_event,
+    fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
+    fetch_pending_records_for_indexing, fetch_pending_records_for_purging,
+};
+pub use indexer::{ReindexStateParams, apply_reindex};
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Error, PgPool};
 
 use crate::{OaiRecordId, oai::OaiRecordStatus};
 
-pub struct FetchRecordsParams<'a> {
-    pub endpoint: &'a str,
-    pub metadata_prefix: &'a str,
-    pub status: OaiRecordStatus,
-    pub last_identifier: Option<&'a str>,
+pub(crate) struct FetchRecordsParams<'a> {
+    pub(crate) endpoint: &'a str,
+    pub(crate) metadata_prefix: &'a str,
+    pub(crate) status: OaiRecordStatus,
+    pub(crate) last_identifier: Option<&'a str>,
 }
 
 pub async fn create_pool(database_url: &str, max_connections: u32) -> anyhow::Result<PgPool> {
@@ -28,7 +36,7 @@ pub async fn create_pool(database_url: &str, max_connections: u32) -> anyhow::Re
     Ok(pool)
 }
 
-pub async fn fetch_records_by_status(
+pub(crate) async fn fetch_records_by_status(
     pool: &PgPool,
     params: FetchRecordsParams<'_>,
 ) -> Result<Vec<OaiRecordId>, Error> {
