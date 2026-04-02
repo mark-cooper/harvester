@@ -7,6 +7,8 @@ pub struct FetchIndexCandidatesParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
     pub oai_repository: &'a str,
+    pub status: OaiRecordStatus,
+    pub index_status: OaiIndexStatus,
     pub max_attempts: Option<i32>,
     pub message_filter: Option<&'a str>,
     pub last_identifier: Option<&'a str>,
@@ -24,236 +26,78 @@ pub struct UpdateIndexStatusParams<'a> {
     pub identifier: &'a str,
 }
 
-pub async fn fetch_pending_records_for_indexing(
+pub async fn fetch(
     pool: &PgPool,
     params: FetchIndexCandidatesParams<'_>,
 ) -> Result<Vec<OaiRecordId>, Error> {
-    match params.last_identifier {
-        Some(last_id) => {
-            sqlx::query_as::<_, OaiRecordId>(
-                r#"
-                SELECT identifier, fingerprint
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = $3
-                  AND index_status = $4
-                  AND metadata->'repository' ? $5
-                  AND identifier > $6
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(OaiRecordStatus::Parsed.as_str())
-            .bind(OaiIndexStatus::Pending.as_str())
-            .bind(params.oai_repository)
-            .bind(last_id)
-            .fetch_all(pool)
-            .await
-        }
-        None => {
-            sqlx::query_as::<_, OaiRecordId>(
-                r#"
-                SELECT identifier, fingerprint
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = $3
-                  AND index_status = $4
-                  AND metadata->'repository' ? $5
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(OaiRecordStatus::Parsed.as_str())
-            .bind(OaiIndexStatus::Pending.as_str())
-            .bind(params.oai_repository)
-            .fetch_all(pool)
-            .await
-        }
-    }
+    sqlx::query_as::<_, OaiRecordId>(
+        r#"
+        SELECT identifier, fingerprint
+        FROM oai_records
+        WHERE endpoint = $1
+          AND metadata_prefix = $2
+          AND status = $3
+          AND index_status = $4
+          AND metadata->'repository' ? $5
+          AND ($6::TEXT IS NULL OR identifier > $6)
+          AND ($7::INT IS NULL OR index_attempts < $7)
+          AND ($8::TEXT IS NULL OR index_message ILIKE ('%' || $8 || '%'))
+        ORDER BY identifier
+        LIMIT 100
+        "#,
+    )
+    .bind(params.endpoint)
+    .bind(params.metadata_prefix)
+    .bind(params.status.as_str())
+    .bind(params.index_status.as_str())
+    .bind(params.oai_repository)
+    .bind(params.last_identifier)
+    .bind(params.max_attempts)
+    .bind(params.message_filter)
+    .fetch_all(pool)
+    .await
 }
 
-pub async fn fetch_pending_records_for_purging(
+/// Batch reindex: reset index_status to pending for all parsed/deleted records.
+pub async fn reindex(
     pool: &PgPool,
-    params: FetchIndexCandidatesParams<'_>,
-) -> Result<Vec<OaiRecordId>, Error> {
-    match params.last_identifier {
-        Some(last_id) => {
-            sqlx::query_as::<_, OaiRecordId>(
-                r#"
-                SELECT identifier, fingerprint
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = $3
-                  AND index_status = $4
-                  AND metadata->'repository' ? $5
-                  AND identifier > $6
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(OaiRecordStatus::Deleted.as_str())
-            .bind(OaiIndexStatus::Pending.as_str())
-            .bind(params.oai_repository)
-            .bind(last_id)
-            .fetch_all(pool)
-            .await
-        }
-        None => {
-            sqlx::query_as::<_, OaiRecordId>(
-                r#"
-                SELECT identifier, fingerprint
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = $3
-                  AND index_status = $4
-                  AND metadata->'repository' ? $5
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(OaiRecordStatus::Deleted.as_str())
-            .bind(OaiIndexStatus::Pending.as_str())
-            .bind(params.oai_repository)
-            .fetch_all(pool)
-            .await
-        }
-    }
-}
+    params: ReindexStateParams<'_>,
+) -> Result<PgQueryResult, Error> {
+    let IndexTransition::BatchReset {
+        eligible_record_statuses,
+        to,
+    } = IndexEvent::ReindexRequested.transition()
+    else {
+        unreachable!("ReindexRequested always produces BatchReset")
+    };
 
-pub async fn fetch_failed_records_for_indexing(
-    pool: &PgPool,
-    params: FetchIndexCandidatesParams<'_>,
-) -> Result<Vec<OaiRecordId>, Error> {
-    match params.last_identifier {
-        Some(last_id) => {
-            sqlx::query_as::<_, OaiRecordId>(
-                r#"
-                SELECT identifier, fingerprint
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = $3
-                  AND index_status = $4
-                  AND metadata->'repository' ? $5
-                  AND identifier > $6
-                  AND ($7::INT IS NULL OR index_attempts < $7)
-                  AND ($8::TEXT IS NULL OR index_message ILIKE ('%' || $8 || '%'))
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(OaiRecordStatus::Parsed.as_str())
-            .bind(OaiIndexStatus::IndexFailed.as_str())
-            .bind(params.oai_repository)
-            .bind(last_id)
-            .bind(params.max_attempts)
-            .bind(params.message_filter)
-            .fetch_all(pool)
-            .await
-        }
-        None => {
-            sqlx::query_as::<_, OaiRecordId>(
-                r#"
-                SELECT identifier, fingerprint
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = $3
-                  AND index_status = $4
-                  AND metadata->'repository' ? $5
-                  AND ($6::INT IS NULL OR index_attempts < $6)
-                  AND ($7::TEXT IS NULL OR index_message ILIKE ('%' || $7 || '%'))
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(OaiRecordStatus::Parsed.as_str())
-            .bind(OaiIndexStatus::IndexFailed.as_str())
-            .bind(params.oai_repository)
-            .bind(params.max_attempts)
-            .bind(params.message_filter)
-            .fetch_all(pool)
-            .await
-        }
-    }
-}
+    let eligible: Vec<&str> = eligible_record_statuses
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
 
-pub async fn fetch_failed_records_for_purging(
-    pool: &PgPool,
-    params: FetchIndexCandidatesParams<'_>,
-) -> Result<Vec<OaiRecordId>, Error> {
-    match params.last_identifier {
-        Some(last_id) => {
-            sqlx::query_as::<_, OaiRecordId>(
-                r#"
-                SELECT identifier, fingerprint
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = $3
-                  AND index_status = $4
-                  AND metadata->'repository' ? $5
-                  AND identifier > $6
-                  AND ($7::INT IS NULL OR index_attempts < $7)
-                  AND ($8::TEXT IS NULL OR index_message ILIKE ('%' || $8 || '%'))
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(OaiRecordStatus::Deleted.as_str())
-            .bind(OaiIndexStatus::PurgeFailed.as_str())
-            .bind(params.oai_repository)
-            .bind(last_id)
-            .bind(params.max_attempts)
-            .bind(params.message_filter)
-            .fetch_all(pool)
-            .await
-        }
-        None => {
-            sqlx::query_as::<_, OaiRecordId>(
-                r#"
-                SELECT identifier, fingerprint
-                FROM oai_records
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND status = $3
-                  AND index_status = $4
-                  AND metadata->'repository' ? $5
-                  AND ($6::INT IS NULL OR index_attempts < $6)
-                  AND ($7::TEXT IS NULL OR index_message ILIKE ('%' || $7 || '%'))
-                ORDER BY identifier
-                LIMIT 100
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(OaiRecordStatus::Deleted.as_str())
-            .bind(OaiIndexStatus::PurgeFailed.as_str())
-            .bind(params.oai_repository)
-            .bind(params.max_attempts)
-            .bind(params.message_filter)
-            .fetch_all(pool)
-            .await
-        }
-    }
+    sqlx::query(
+        r#"
+        UPDATE oai_records
+        SET index_status = $3,
+            index_message = '',
+            index_attempts = 0,
+            indexed_at = NULL,
+            purged_at = NULL,
+            index_last_checked_at = NULL
+        WHERE endpoint = $1
+          AND metadata_prefix = $2
+          AND status = ANY($4::text[])
+          AND metadata->'repository' ? $5
+        "#,
+    )
+    .bind(params.endpoint)
+    .bind(params.metadata_prefix)
+    .bind(to.as_str())
+    .bind(&eligible)
+    .bind(params.oai_repository)
+    .execute(pool)
+    .await
 }
 
 /// Apply an index event to a single record.
@@ -383,46 +227,4 @@ pub async fn transition(
             unreachable!("handled by let-else above")
         }
     }
-}
-
-/// Batch reindex: reset index_status to pending for all parsed/deleted records.
-pub async fn reindex(
-    pool: &PgPool,
-    params: ReindexStateParams<'_>,
-) -> Result<PgQueryResult, Error> {
-    let IndexTransition::BatchReset {
-        eligible_record_statuses,
-        to,
-    } = IndexEvent::ReindexRequested.transition()
-    else {
-        unreachable!("ReindexRequested always produces BatchReset")
-    };
-
-    let eligible: Vec<&str> = eligible_record_statuses
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
-
-    sqlx::query(
-        r#"
-        UPDATE oai_records
-        SET index_status = $3,
-            index_message = '',
-            index_attempts = 0,
-            indexed_at = NULL,
-            purged_at = NULL,
-            index_last_checked_at = NULL
-        WHERE endpoint = $1
-          AND metadata_prefix = $2
-          AND status = ANY($4::text[])
-          AND metadata->'repository' ? $5
-        "#,
-    )
-    .bind(params.endpoint)
-    .bind(params.metadata_prefix)
-    .bind(to.as_str())
-    .bind(&eligible)
-    .bind(params.oai_repository)
-    .execute(pool)
-    .await
 }

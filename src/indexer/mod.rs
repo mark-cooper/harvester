@@ -9,12 +9,9 @@ use tracing::{error, info, warn};
 
 use crate::{
     OaiRecordId,
-    db::indexer::{
-        FetchIndexCandidatesParams, UpdateIndexStatusParams, fetch_failed_records_for_indexing,
-        fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
-        fetch_pending_records_for_purging, transition,
-    },
+    db::indexer::{FetchIndexCandidatesParams, UpdateIndexStatusParams, fetch, transition},
     oai::IndexEvent,
+    oai::{OaiIndexStatus, OaiRecordStatus},
 };
 
 const BATCH_SIZE: usize = 100;
@@ -127,29 +124,33 @@ async fn fetch_batch(
     phase: &RecordPhase,
     last_identifier: Option<&str>,
 ) -> anyhow::Result<Vec<OaiRecordId>> {
+    let (status, index_status) = match (phase, ctx.run_options.selection_mode) {
+        (RecordPhase::Index, IndexSelectionMode::PendingOnly) => {
+            (OaiRecordStatus::Parsed, OaiIndexStatus::Pending)
+        }
+        (RecordPhase::Index, IndexSelectionMode::FailedOnly) => {
+            (OaiRecordStatus::Parsed, OaiIndexStatus::IndexFailed)
+        }
+        (RecordPhase::Purge, IndexSelectionMode::PendingOnly) => {
+            (OaiRecordStatus::Deleted, OaiIndexStatus::Pending)
+        }
+        (RecordPhase::Purge, IndexSelectionMode::FailedOnly) => {
+            (OaiRecordStatus::Deleted, OaiIndexStatus::PurgeFailed)
+        }
+    };
+
     let params = FetchIndexCandidatesParams {
         endpoint: &ctx.endpoint,
         metadata_prefix: &ctx.metadata_prefix,
         oai_repository: &ctx.oai_repository,
+        status,
+        index_status,
         max_attempts: ctx.run_options.max_attempts,
         message_filter: ctx.run_options.message_filter.as_deref(),
         last_identifier,
     };
 
-    Ok(match (phase, ctx.run_options.selection_mode) {
-        (RecordPhase::Index, IndexSelectionMode::PendingOnly) => {
-            fetch_pending_records_for_indexing(&ctx.pool, params).await?
-        }
-        (RecordPhase::Index, IndexSelectionMode::FailedOnly) => {
-            fetch_failed_records_for_indexing(&ctx.pool, params).await?
-        }
-        (RecordPhase::Purge, IndexSelectionMode::PendingOnly) => {
-            fetch_pending_records_for_purging(&ctx.pool, params).await?
-        }
-        (RecordPhase::Purge, IndexSelectionMode::FailedOnly) => {
-            fetch_failed_records_for_purging(&ctx.pool, params).await?
-        }
-    })
+    Ok(fetch(&ctx.pool, params).await?)
 }
 
 async fn mark_success(
