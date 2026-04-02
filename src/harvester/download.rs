@@ -27,7 +27,7 @@ async fn process_batch(
     records: &[OaiRecordId],
 ) -> BatchStats {
     let results: Vec<_> = stream::iter(records)
-        .map(|record| download_record(client, harvester, record))
+        .map(|record| process_record(client, harvester, record))
         .buffer_unordered(CONCURRENT_DOWNLOADS)
         .collect()
         .await;
@@ -44,7 +44,7 @@ async fn process_batch(
     stats
 }
 
-async fn download_record(
+async fn process_record(
     client: &Client,
     harvester: &Harvester,
     record: &OaiRecordId,

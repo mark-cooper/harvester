@@ -15,6 +15,15 @@ use oai_pmh::{Client, ListIdentifiersArgs};
 const BATCH_SIZE: usize = 100;
 
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
+    let total = process(harvester).await?;
+    info!(
+        "Imported {} records (active: {}, deleted: {})",
+        total.processed, total.imported, total.deleted
+    );
+    Ok(())
+}
+
+async fn process(harvester: &Harvester) -> anyhow::Result<ImportStats> {
     let duration = Duration::from_secs(harvester.config.oai_timeout);
     let client = Client::new(&harvester.config.endpoint)?;
 
@@ -35,6 +44,10 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
             )
         })??;
 
+    let params = ImportParams {
+        endpoint: &harvester.config.endpoint,
+        metadata_prefix: &harvester.config.metadata_prefix,
+    };
     let mut batch = Vec::with_capacity(BATCH_SIZE);
     let mut total = ImportStats::default();
 
@@ -54,9 +67,9 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
         if let Some(payload) = response.payload {
             for header in payload.header {
                 batch.push(OaiRecordImport::from(header));
-
                 if batch.len() >= BATCH_SIZE {
-                    total = import(harvester, &batch, total).await?;
+                    let stats = batch_upsert_records(&harvester.pool, params, &batch).await?;
+                    total.accumulate(&stats);
                     batch.clear();
                 }
             }
@@ -64,28 +77,9 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     }
 
     if !batch.is_empty() {
-        total = import(harvester, &batch, total).await?;
+        let stats = batch_upsert_records(&harvester.pool, params, &batch).await?;
+        total.accumulate(&stats);
     }
 
-    info!(
-        "Imported {} records (active: {}, deleted: {})",
-        total.processed, total.imported, total.deleted
-    );
-    Ok(())
-}
-
-async fn import(
-    harvester: &Harvester,
-    records: &[OaiRecordImport],
-    mut total: ImportStats,
-) -> anyhow::Result<ImportStats> {
-    let params = ImportParams {
-        endpoint: harvester.config.endpoint.as_str(),
-        metadata_prefix: harvester.config.metadata_prefix.as_str(),
-    };
-    let stats = batch_upsert_records(&harvester.pool, params, records).await?;
-    total.processed += stats.processed;
-    total.imported += stats.imported;
-    total.deleted += stats.deleted;
     Ok(total)
 }

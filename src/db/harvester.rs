@@ -25,6 +25,14 @@ pub(crate) struct ImportStats {
     pub(crate) deleted: usize,
 }
 
+impl ImportStats {
+    pub(crate) fn accumulate(&mut self, other: &Self) {
+        self.processed += other.processed;
+        self.imported += other.imported;
+        self.deleted += other.deleted;
+    }
+}
+
 pub struct RetryHarvestParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
