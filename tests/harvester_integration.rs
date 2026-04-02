@@ -5,6 +5,7 @@ use std::{collections::HashMap, fs};
 use harvester::{
     OaiRecordId,
     db::harvester::{RetryHarvestParams, retry},
+    oai::OaiRecordStatus,
 };
 use support::{
     DEFAULT_DATESTAMP, EAD_XML, GetRecordSpec, MockOaiConfig, acquire_test_lock,
@@ -42,6 +43,7 @@ async fn run_without_rules_leaves_records_available() -> anyhow::Result<()> {
     let record = OaiRecordId {
         identifier: identifier.to_string(),
         fingerprint,
+        status: OaiRecordStatus::Available,
     };
     assert!(data_dir.join(record.path()).is_file());
     Ok(())
@@ -318,6 +320,7 @@ async fn metadata_missing_file_marks_failed_and_continues() -> anyhow::Result<()
     let present_record = OaiRecordId {
         identifier: present_identifier.to_string(),
         fingerprint: present_fingerprint,
+        status: OaiRecordStatus::Available,
     };
     let present_path = data_dir.join(present_record.path());
     if let Some(parent) = present_path.parent() {
@@ -367,6 +370,7 @@ async fn metadata_invalid_xml_marks_failed() -> anyhow::Result<()> {
     let record = OaiRecordId {
         identifier: identifier.to_string(),
         fingerprint,
+        status: OaiRecordStatus::Available,
     };
     let path = data_dir.join(record.path());
     if let Some(parent) = path.parent() {

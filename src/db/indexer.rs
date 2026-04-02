@@ -1,14 +1,16 @@
 use sqlx::postgres::PgQueryResult;
 use sqlx::{Error, PgPool};
 
-use crate::oai::{IndexEvent, IndexTransition, OaiIndexStatus, OaiRecordId, OaiRecordStatus};
+use crate::{
+    IndexSelectionMode,
+    oai::{IndexEvent, IndexTransition, OaiIndexStatus, OaiRecordId, OaiRecordStatus},
+};
 
 pub struct FetchIndexCandidatesParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
     pub oai_repository: &'a str,
-    pub status: OaiRecordStatus,
-    pub index_status: OaiIndexStatus,
+    pub selection_mode: IndexSelectionMode,
     pub max_attempts: Option<i32>,
     pub message_filter: Option<&'a str>,
     pub last_identifier: Option<&'a str>,
@@ -30,26 +32,37 @@ pub async fn fetch(
     pool: &PgPool,
     params: FetchIndexCandidatesParams<'_>,
 ) -> Result<Vec<OaiRecordId>, Error> {
+    let (parsed_index_status, deleted_index_status) = match params.selection_mode {
+        IndexSelectionMode::PendingOnly => (OaiIndexStatus::Pending, OaiIndexStatus::Pending),
+        IndexSelectionMode::FailedOnly => {
+            (OaiIndexStatus::IndexFailed, OaiIndexStatus::PurgeFailed)
+        }
+    };
+
     sqlx::query_as::<_, OaiRecordId>(
         r#"
-        SELECT identifier, fingerprint
+        SELECT identifier, fingerprint, status
         FROM oai_records
         WHERE endpoint = $1
           AND metadata_prefix = $2
-          AND status = $3
-          AND index_status = $4
-          AND metadata->'repository' ? $5
-          AND ($6::TEXT IS NULL OR identifier > $6)
-          AND ($7::INT IS NULL OR index_attempts < $7)
-          AND ($8::TEXT IS NULL OR index_message ILIKE ('%' || $8 || '%'))
+          AND (
+                (status = $3 AND index_status = $4)
+             OR (status = $5 AND index_status = $6)
+          )
+          AND metadata->'repository' ? $7
+          AND ($8::TEXT IS NULL OR identifier > $8)
+          AND ($9::INT IS NULL OR index_attempts < $9)
+          AND ($10::TEXT IS NULL OR index_message ILIKE ('%' || $10 || '%'))
         ORDER BY identifier
         LIMIT 100
         "#,
     )
     .bind(params.endpoint)
     .bind(params.metadata_prefix)
-    .bind(params.status.as_str())
-    .bind(params.index_status.as_str())
+    .bind(OaiRecordStatus::Parsed.as_str())
+    .bind(parsed_index_status.as_str())
+    .bind(OaiRecordStatus::Deleted.as_str())
+    .bind(deleted_index_status.as_str())
     .bind(params.oai_repository)
     .bind(params.last_identifier)
     .bind(params.max_attempts)

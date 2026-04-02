@@ -1,5 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use oai_pmh::client::response::Header;
 use tracing::warn;
@@ -18,6 +19,7 @@ pub struct OaiConfig {
 pub struct OaiRecordId {
     pub identifier: String,
     pub fingerprint: String,
+    pub status: OaiRecordStatus,
 }
 
 impl OaiRecordId {
@@ -68,7 +70,8 @@ impl From<Header> for OaiRecordImport {
 /// Index lifecycle ownership:
 /// - metadata success also resets index lifecycle (`index_status -> pending`)
 /// - import of deleted records also requeues index lifecycle (`index_status -> pending`)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
 pub enum OaiRecordStatus {
     Available,
     Deleted,
@@ -85,6 +88,21 @@ impl OaiRecordStatus {
             OaiRecordStatus::Failed => "failed",
             OaiRecordStatus::Parsed => "parsed",
             OaiRecordStatus::Pending => "pending",
+        }
+    }
+}
+
+impl FromStr for OaiRecordStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "available" => Ok(OaiRecordStatus::Available),
+            "deleted" => Ok(OaiRecordStatus::Deleted),
+            "failed" => Ok(OaiRecordStatus::Failed),
+            "parsed" => Ok(OaiRecordStatus::Parsed),
+            "pending" => Ok(OaiRecordStatus::Pending),
+            _ => Err(format!("unknown OAI record status: {value}")),
         }
     }
 }

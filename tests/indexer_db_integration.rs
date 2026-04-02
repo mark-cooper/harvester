@@ -1,12 +1,12 @@
 mod support;
 
 use harvester::{
-    OaiRecordId,
+    IndexSelectionMode, OaiRecordId,
     db::indexer::{
         FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexStatusParams, fetch, reindex,
         transition,
     },
-    oai::{IndexEvent, OaiIndexStatus, OaiRecordStatus},
+    oai::{IndexEvent, OaiRecordStatus},
 };
 use support::{
     DEFAULT_DATESTAMP, METADATA_PREFIX, acquire_test_lock, fetch_record_snapshot,
@@ -20,10 +20,10 @@ fn metadata(repository: &str) -> serde_json::Value {
     serde_json::json!({ "repository": [repository] })
 }
 
-fn identifiers(records: Vec<OaiRecordId>) -> Vec<String> {
+fn records_with_status(records: Vec<OaiRecordId>) -> Vec<(String, OaiRecordStatus)> {
     records
         .into_iter()
-        .map(|record| record.identifier)
+        .map(|record| (record.identifier, record.status))
         .collect()
 }
 
@@ -85,28 +85,20 @@ async fn pending_candidate_queries_only_select_pending_records() -> anyhow::Resu
         endpoint: ENDPOINT,
         metadata_prefix: METADATA_PREFIX,
         oai_repository: REPOSITORY,
-        status: OaiRecordStatus::Parsed,
-        index_status: OaiIndexStatus::Pending,
+        selection_mode: IndexSelectionMode::PendingOnly,
         max_attempts: None,
         message_filter: None,
         last_identifier: None,
     };
 
-    let to_index = fetch(&pool, params).await?;
-    assert_eq!(identifiers(to_index), vec!["a-pending-parsed".to_string()]);
-
-    let params = FetchIndexCandidatesParams {
-        endpoint: ENDPOINT,
-        metadata_prefix: METADATA_PREFIX,
-        oai_repository: REPOSITORY,
-        status: OaiRecordStatus::Deleted,
-        index_status: OaiIndexStatus::Pending,
-        max_attempts: None,
-        message_filter: None,
-        last_identifier: None,
-    };
-    let to_purge = fetch(&pool, params).await?;
-    assert_eq!(identifiers(to_purge), vec!["c-pending-deleted".to_string()]);
+    let pending = fetch(&pool, params).await?;
+    assert_eq!(
+        records_with_status(pending),
+        vec![
+            ("a-pending-parsed".to_string(), OaiRecordStatus::Parsed),
+            ("c-pending-deleted".to_string(), OaiRecordStatus::Deleted),
+        ]
+    );
 
     Ok(())
 }
@@ -169,32 +161,21 @@ async fn failed_candidate_queries_apply_attempt_and_message_filters() -> anyhow:
         endpoint: ENDPOINT,
         metadata_prefix: METADATA_PREFIX,
         oai_repository: REPOSITORY,
-        status: OaiRecordStatus::Parsed,
-        index_status: OaiIndexStatus::IndexFailed,
+        selection_mode: IndexSelectionMode::FailedOnly,
         max_attempts: Some(5),
         message_filter: Some("timed out"),
         last_identifier: None,
     };
-    let failed_index = fetch(&pool, params).await?;
+    let failed = fetch(&pool, params).await?;
     assert_eq!(
-        identifiers(failed_index),
-        vec!["a-timeout-low-attempts".to_string()]
-    );
-
-    let params = FetchIndexCandidatesParams {
-        endpoint: ENDPOINT,
-        metadata_prefix: METADATA_PREFIX,
-        oai_repository: REPOSITORY,
-        status: OaiRecordStatus::Deleted,
-        index_status: OaiIndexStatus::PurgeFailed,
-        max_attempts: Some(3),
-        message_filter: Some("timed out"),
-        last_identifier: None,
-    };
-    let failed_purge = fetch(&pool, params).await?;
-    assert_eq!(
-        identifiers(failed_purge),
-        vec!["d-purge-timeout".to_string()]
+        records_with_status(failed),
+        vec![
+            (
+                "a-timeout-low-attempts".to_string(),
+                OaiRecordStatus::Parsed
+            ),
+            ("d-purge-timeout".to_string(), OaiRecordStatus::Deleted),
+        ]
     );
 
     Ok(())

@@ -131,7 +131,7 @@ pub(crate) async fn fetch(
 ) -> Result<Vec<OaiRecordId>, Error> {
     sqlx::query_as::<_, OaiRecordId>(
         r#"
-        SELECT identifier, fingerprint
+        SELECT identifier, fingerprint, status
         FROM oai_records
         WHERE endpoint = $1
           AND metadata_prefix = $2

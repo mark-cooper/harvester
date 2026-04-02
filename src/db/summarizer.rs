@@ -10,10 +10,9 @@ pub(crate) async fn fetch_record_for_summary(
     metadata_prefix: &str,
     identifier: &str,
 ) -> Result<Option<OaiRecordId>, Error> {
-    sqlx::query_as!(
-        OaiRecordId,
+    sqlx::query_as::<_, OaiRecordId>(
         r#"
-        SELECT identifier, fingerprint AS "fingerprint!"
+        SELECT identifier, fingerprint, status
         FROM oai_records
         WHERE endpoint = $1
           AND metadata_prefix = $2
@@ -21,11 +20,11 @@ pub(crate) async fn fetch_record_for_summary(
           AND status = $4
         LIMIT 1
         "#,
-        endpoint,
-        metadata_prefix,
-        identifier,
-        OaiRecordStatus::Parsed.as_str()
     )
+    .bind(endpoint)
+    .bind(metadata_prefix)
+    .bind(identifier)
+    .bind(OaiRecordStatus::Parsed.as_str())
     .fetch_optional(pool)
     .await
 }
