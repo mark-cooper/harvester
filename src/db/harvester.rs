@@ -249,7 +249,7 @@ pub async fn transition(
             .await
         }
         HarvestEvent::HarvestRetryRequested => Err(sqlx::Error::Protocol(
-            "HarvestRetryRequested is a batch operation; use apply_harvest_retry()".into(),
+            "HarvestRetryRequested is a batch operation; use retry()".into(),
         )),
     }
 }

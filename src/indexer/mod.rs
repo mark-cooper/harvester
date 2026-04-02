@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::{StreamExt, future::BoxFuture, stream};
 use sqlx::PgPool;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::{
     OaiRecordId,
@@ -17,39 +17,73 @@ use crate::{
 const BATCH_SIZE: usize = 100;
 const CONCURRENCY: usize = 10;
 
-pub struct IndexerContext {
+pub trait Indexer: Sync {
+    fn index_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn delete_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
+}
+
+pub struct IndexRunnerConfig {
+    pub endpoint: String,
+    pub metadata_prefix: String,
+    pub oai_repository: String,
+    pub run_options: IndexRunOptions,
+    pub preview: bool,
+}
+
+pub struct IndexRunner<T: Indexer> {
+    indexer: T,
+    config: IndexRunnerConfig,
     pool: PgPool,
-    endpoint: String,
-    metadata_prefix: String,
-    oai_repository: String,
-    run_options: IndexRunOptions,
-    preview: bool,
     shutdown: Arc<AtomicBool>,
 }
 
-impl IndexerContext {
+impl<T: Indexer> IndexRunner<T> {
     pub fn new(
+        indexer: T,
+        config: IndexRunnerConfig,
         pool: PgPool,
-        endpoint: String,
-        metadata_prefix: String,
-        oai_repository: String,
-        run_options: IndexRunOptions,
-        preview: bool,
         shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
+            indexer,
+            config,
             pool,
-            endpoint,
-            metadata_prefix,
-            oai_repository,
-            run_options,
-            preview,
             shutdown,
         }
     }
 
     fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Relaxed)
+    }
+
+    async fn update(&self, record: &OaiRecordId, event: &IndexEvent<'_>) -> anyhow::Result<bool> {
+        let params = UpdateIndexStatusParams {
+            endpoint: &self.config.endpoint,
+            metadata_prefix: &self.config.metadata_prefix,
+            identifier: &record.identifier,
+        };
+
+        match transition(&self.pool, params, event).await {
+            Ok(result) => Ok(result.rows_affected() > 0),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let indexed = process_records(self, RecordPhase::Index).await?;
+        let deleted = process_records(self, RecordPhase::Purge).await?;
+
+        info!("Indexed records: {}", indexed.succeeded);
+        info!("Deleted records: {}", deleted.succeeded);
+        info!("Failed index operations: {}", indexed.failed);
+        info!("Failed delete operations: {}", deleted.failed);
+
+        let total_failed = indexed.failed + deleted.failed;
+        if total_failed > 0 {
+            anyhow::bail!("index run completed with {} failed record(s)", total_failed);
+        }
+
+        Ok(())
     }
 }
 
@@ -97,34 +131,86 @@ enum RecordPhase {
     Purge,
 }
 
-pub trait Indexer: Sync {
-    fn index_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
-    fn delete_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
-}
+async fn process_records<T: Indexer>(
+    runner: &IndexRunner<T>,
+    phase: RecordPhase,
+) -> anyhow::Result<ProcessStats> {
+    let mut last_identifier: Option<String> = None;
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
 
-pub async fn run<T: Indexer>(ctx: &IndexerContext, indexer: &T) -> anyhow::Result<()> {
-    let indexed = process_records(ctx, indexer, RecordPhase::Index).await?;
-    let deleted = process_records(ctx, indexer, RecordPhase::Purge).await?;
+    loop {
+        if runner.is_shutdown() {
+            break;
+        }
+        let batch = fetch_batch(runner, &phase, last_identifier.as_deref()).await?;
+        if batch.is_empty() {
+            break;
+        }
 
-    info!("Indexed records: {}", indexed.succeeded);
-    info!("Deleted records: {}", deleted.succeeded);
-    info!("Failed index operations: {}", indexed.failed);
-    info!("Failed delete operations: {}", deleted.failed);
+        last_identifier = batch.last().map(|r| r.identifier.clone());
 
-    let total_failed = indexed.failed + deleted.failed;
-    if total_failed > 0 {
-        anyhow::bail!("index run completed with {} failed record(s)", total_failed);
+        if runner.config.preview {
+            for record in &batch {
+                let label = match phase {
+                    RecordPhase::Index => "index",
+                    RecordPhase::Purge => "delete",
+                };
+                info!("Would {} record: {}", label, record.identifier);
+            }
+            succeeded += batch.len();
+        } else {
+            let results: Vec<_> = stream::iter(&batch)
+                .map(|record| {
+                    let fut = match phase {
+                        RecordPhase::Index => runner.indexer.index_record(record),
+                        RecordPhase::Purge => runner.indexer.delete_record(record),
+                    };
+                    async move { (record, fut.await) }
+                })
+                .buffer_unordered(CONCURRENCY)
+                .collect()
+                .await;
+
+            for (record, result) in results {
+                match result {
+                    Ok(()) => {
+                        let event = match phase {
+                            RecordPhase::Index => IndexEvent::IndexSucceeded,
+                            RecordPhase::Purge => IndexEvent::PurgeSucceeded,
+                        };
+                        if let Ok(true) = runner.update(record, &event).await {
+                            succeeded += 1;
+                        }
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        let message = truncate_middle(&e.to_string(), 200, 200);
+                        error!("Failed to process: {}", message);
+                        let event = match phase {
+                            RecordPhase::Index => IndexEvent::IndexFailed { message: &message },
+                            RecordPhase::Purge => IndexEvent::PurgeFailed { message: &message },
+                        };
+                        let _ = runner.update(record, &event).await;
+                    }
+                }
+            }
+        }
+
+        if batch.len() < BATCH_SIZE {
+            break;
+        }
     }
 
-    Ok(())
+    Ok(ProcessStats { succeeded, failed })
 }
 
-async fn fetch_batch(
-    ctx: &IndexerContext,
+async fn fetch_batch<T: Indexer>(
+    runner: &IndexRunner<T>,
     phase: &RecordPhase,
     last_identifier: Option<&str>,
 ) -> anyhow::Result<Vec<OaiRecordId>> {
-    let (status, index_status) = match (phase, ctx.run_options.selection_mode) {
+    let (status, index_status) = match (phase, runner.config.run_options.selection_mode) {
         (RecordPhase::Index, IndexSelectionMode::PendingOnly) => {
             (OaiRecordStatus::Parsed, OaiIndexStatus::Pending)
         }
@@ -140,158 +226,17 @@ async fn fetch_batch(
     };
 
     let params = FetchIndexCandidatesParams {
-        endpoint: &ctx.endpoint,
-        metadata_prefix: &ctx.metadata_prefix,
-        oai_repository: &ctx.oai_repository,
+        endpoint: &runner.config.endpoint,
+        metadata_prefix: &runner.config.metadata_prefix,
+        oai_repository: &runner.config.oai_repository,
         status,
         index_status,
-        max_attempts: ctx.run_options.max_attempts,
-        message_filter: ctx.run_options.message_filter.as_deref(),
+        max_attempts: runner.config.run_options.max_attempts,
+        message_filter: runner.config.run_options.message_filter.as_deref(),
         last_identifier,
     };
 
-    Ok(fetch(&ctx.pool, params).await?)
-}
-
-async fn mark_success(
-    ctx: &IndexerContext,
-    phase: &RecordPhase,
-    record: &OaiRecordId,
-) -> anyhow::Result<bool> {
-    let params = UpdateIndexStatusParams {
-        endpoint: &ctx.endpoint,
-        metadata_prefix: &ctx.metadata_prefix,
-        identifier: &record.identifier,
-    };
-
-    let event = match phase {
-        RecordPhase::Index => IndexEvent::IndexSucceeded,
-        RecordPhase::Purge => IndexEvent::PurgeSucceeded,
-    };
-
-    let result = transition(&ctx.pool, params, &event).await?;
-
-    if result.rows_affected() == 0 {
-        let transition = match phase {
-            RecordPhase::Index => "pending|index_failed->indexed",
-            RecordPhase::Purge => "pending|purge_failed->purged",
-        };
-        warn!(
-            "Skipped transition {} for {} (record is no longer in an expected state)",
-            transition, record.identifier
-        );
-        return Ok(false);
-    }
-
-    Ok(true)
-}
-
-async fn mark_failure(
-    ctx: &IndexerContext,
-    phase: &RecordPhase,
-    record: &OaiRecordId,
-    message: &str,
-) -> anyhow::Result<()> {
-    let params = UpdateIndexStatusParams {
-        endpoint: &ctx.endpoint,
-        metadata_prefix: &ctx.metadata_prefix,
-        identifier: &record.identifier,
-    };
-
-    let event = match phase {
-        RecordPhase::Index => IndexEvent::IndexFailed { message },
-        RecordPhase::Purge => IndexEvent::PurgeFailed { message },
-    };
-
-    let result = transition(&ctx.pool, params, &event).await?;
-
-    if result.rows_affected() == 0 {
-        let transition = match phase {
-            RecordPhase::Index => "pending|index_failed->index_failed",
-            RecordPhase::Purge => "pending|purge_failed->purge_failed",
-        };
-        warn!(
-            "Skipped transition {} for {} (record is no longer in an expected state)",
-            transition, record.identifier
-        );
-    }
-
-    Ok(())
-}
-
-async fn process_records<T: Indexer>(
-    ctx: &IndexerContext,
-    indexer: &T,
-    phase: RecordPhase,
-) -> anyhow::Result<ProcessStats> {
-    let mut last_identifier: Option<String> = None;
-    let mut succeeded = 0usize;
-    let mut failed = 0usize;
-
-    loop {
-        if ctx.is_shutdown() {
-            break;
-        }
-        let batch = fetch_batch(ctx, &phase, last_identifier.as_deref()).await?;
-        if batch.is_empty() {
-            break;
-        }
-
-        last_identifier = batch.last().map(|r| r.identifier.clone());
-
-        if ctx.preview {
-            for record in &batch {
-                let label = match phase {
-                    RecordPhase::Index => "index",
-                    RecordPhase::Purge => "delete",
-                };
-                info!("Would {} record: {}", label, record.identifier);
-            }
-            succeeded += batch.len();
-        } else {
-            let results: Vec<_> = stream::iter(&batch)
-                .map(|record| {
-                    let fut = match phase {
-                        RecordPhase::Index => indexer.index_record(record),
-                        RecordPhase::Purge => indexer.delete_record(record),
-                    };
-                    async move { (record, fut.await) }
-                })
-                .buffer_unordered(CONCURRENCY)
-                .collect()
-                .await;
-
-            for (record, result) in results {
-                match result {
-                    Ok(()) => match mark_success(ctx, &phase, record).await {
-                        Ok(true) => succeeded += 1,
-                        Ok(false) => {}
-                        Err(e) => {
-                            failed += 1;
-                            error!("Failed to mark success for {}: {}", record.identifier, e);
-                        }
-                    },
-                    Err(e) => {
-                        failed += 1;
-                        let message = truncate_middle(&e.to_string(), 200, 200);
-                        error!("Failed to process: {}", message);
-                        if let Err(db_err) = mark_failure(ctx, &phase, record, &message).await {
-                            error!(
-                                "Failed to mark failure for {}: {}",
-                                record.identifier, db_err
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        if batch.len() < BATCH_SIZE {
-            break;
-        }
-    }
-
-    Ok(ProcessStats { succeeded, failed })
+    Ok(fetch(&runner.pool, params).await?)
 }
 
 /// Get head & tail of string for debugging shelled-out cmds

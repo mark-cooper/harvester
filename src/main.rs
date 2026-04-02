@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use clap::{Parser, Subcommand};
 use harvester::{
     ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, Harvester, HarvesterArgs,
-    IndexRunOptions, IndexerContext, OaiConfig, build_arclight_config,
+    IndexRunOptions, IndexRunner, IndexRunnerConfig, OaiConfig, build_arclight_config,
     db::{self, harvester::RetryHarvestParams, indexer::ReindexStateParams},
-    expand_path, run_indexer,
+    expand_path,
 };
 use tracing::info;
 
@@ -121,20 +121,23 @@ async fn main() -> anyhow::Result<()> {
 
             info!("Indexing records into {}", cfg.repository);
 
-            let ctx = IndexerContext::new(
-                pool,
-                cfg.oai_endpoint.clone(),
-                ARCLIGHT_METADATA_PREFIX.to_string(),
-                cfg.oai_repository.clone(),
-                run_option,
-                cfg.preview,
-                shutdown.clone(),
-            );
+            let oai_endpoint = cfg.oai_endpoint.clone();
+            let oai_repository = cfg.oai_repository.clone();
+            let preview = cfg.preview;
 
             let config = build_arclight_config(cfg)?;
             let indexer = ArcLightIndexer::new(config);
 
-            run_indexer(&ctx, &indexer).await?;
+            let runner_config = IndexRunnerConfig {
+                endpoint: oai_endpoint,
+                metadata_prefix: ARCLIGHT_METADATA_PREFIX.to_string(),
+                oai_repository,
+                run_options: run_option,
+                preview,
+            };
+            let runner = IndexRunner::new(indexer, runner_config, pool, shutdown.clone());
+
+            runner.run().await?;
         }
     }
 
