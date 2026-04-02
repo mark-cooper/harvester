@@ -42,25 +42,25 @@ impl ArcLightIndexer {
     /// When `commit` is true, a hard commit is issued so the delete is visible
     /// before any subsequent writes (needed for pre-index cleanup).
     async fn solr_delete_by_root(&self, fingerprint: &str, commit: bool) -> anyhow::Result<()> {
-        let payload = if commit {
-            serde_json::json!({
-                "delete": {
-                    "query": format!("_root_:{}", fingerprint)
-                }
-            })
+        let (payload, url) = if commit {
+            (
+                serde_json::json!({
+                    "delete": {
+                        "query": format!("_root_:{}", fingerprint)
+                    }
+                }),
+                format!("{}?commit=true", self.solr_update_url()),
+            )
         } else {
-            serde_json::json!({
-                "delete": {
-                    "query": format!("_root_:{}", fingerprint),
-                    "commitWithin": self.config.solr_commit_within_ms
-                }
-            })
-        };
-
-        let url = if commit {
-            format!("{}?commit=true", self.solr_update_url())
-        } else {
-            self.solr_update_url()
+            (
+                serde_json::json!({
+                    "delete": {
+                        "query": format!("_root_:{}", fingerprint),
+                        "commitWithin": self.config.solr_commit_within_ms
+                    }
+                }),
+                self.solr_update_url(),
+            )
         };
 
         let response = match timeout(
