@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
                     endpoint: &cfg.endpoint,
                     metadata_prefix: &cfg.metadata_prefix,
                 };
-                let result = db::apply_harvest_retry(&pool, params).await?;
+                let result = db::apply_retry(&pool, params).await?;
                 info!(
                     "Reset {} failed record(s) to pending",
                     result.rows_affected()

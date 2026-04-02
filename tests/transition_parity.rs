@@ -3,7 +3,7 @@ mod support;
 use harvester::{
     db::{
         RecordTransitionParams, ReindexStateParams, RetryHarvestParams, UpdateIndexStatusParams,
-        apply_harvest_event, apply_harvest_retry, apply_index_event, apply_reindex,
+        apply_index_event, apply_reindex, apply_retry, apply_transition,
     },
     oai::{HarvestEvent, IndexEvent},
 };
@@ -30,7 +30,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
 
     // DownloadSucceeded: pending -> available
     insert_record(&pool, ENDPOINT, "dl-ok", DEFAULT_DATESTAMP, "pending").await?;
-    apply_harvest_event(
+    apply_transition(
         &pool,
         RecordTransitionParams {
             endpoint: ENDPOINT,
@@ -45,7 +45,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
 
     // DownloadFailed: pending -> failed
     insert_record(&pool, ENDPOINT, "dl-fail", DEFAULT_DATESTAMP, "pending").await?;
-    apply_harvest_event(
+    apply_transition(
         &pool,
         RecordTransitionParams {
             endpoint: ENDPOINT,
@@ -61,7 +61,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
 
     // MetadataExtracted: available -> parsed
     insert_record(&pool, ENDPOINT, "meta-ok", DEFAULT_DATESTAMP, "available").await?;
-    apply_harvest_event(
+    apply_transition(
         &pool,
         RecordTransitionParams {
             endpoint: ENDPOINT,
@@ -78,7 +78,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
 
     // MetadataFailed: available -> failed
     insert_record(&pool, ENDPOINT, "meta-fail", DEFAULT_DATESTAMP, "available").await?;
-    apply_harvest_event(
+    apply_transition(
         &pool,
         RecordTransitionParams {
             endpoint: ENDPOINT,
@@ -94,7 +94,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
 
     // HarvestRetry: failed -> pending (batch)
     insert_record(&pool, ENDPOINT, "retry-me", DEFAULT_DATESTAMP, "failed").await?;
-    apply_harvest_retry(
+    apply_retry(
         &pool,
         RetryHarvestParams {
             endpoint: ENDPOINT,

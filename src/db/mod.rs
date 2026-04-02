@@ -3,9 +3,7 @@ mod indexer;
 mod summarizer;
 
 pub(crate) use harvester::{ImportParams, ImportStats, batch_upsert_records};
-pub use harvester::{
-    RecordTransitionParams, RetryHarvestParams, apply_harvest_event, apply_harvest_retry,
-};
+pub use harvester::{RecordTransitionParams, RetryHarvestParams, apply_retry, apply_transition};
 pub use indexer::{
     FetchIndexCandidatesParams, UpdateIndexStatusParams, apply_index_event,
     fetch_failed_records_for_indexing, fetch_failed_records_for_purging,

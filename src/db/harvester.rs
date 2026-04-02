@@ -18,20 +18,20 @@ pub(crate) struct ImportStats {
     pub(crate) deleted: usize,
 }
 
+pub struct RetryHarvestParams<'a> {
+    pub endpoint: &'a str,
+    pub metadata_prefix: &'a str,
+}
+
 pub struct RecordTransitionParams<'a> {
     pub endpoint: &'a str,
     pub metadata_prefix: &'a str,
     pub identifier: &'a str,
 }
 
-pub struct RetryHarvestParams<'a> {
-    pub endpoint: &'a str,
-    pub metadata_prefix: &'a str,
-}
-
-/// Apply a harvest event to a single record.
+/// Apply a harvest event (transition state) for a single record.
 /// Uses a static SQL query per event variant (no dynamic SQL construction).
-pub async fn apply_harvest_event(
+pub async fn apply_transition(
     pool: &PgPool,
     params: RecordTransitionParams<'_>,
     event: &HarvestEvent<'_>,
@@ -115,7 +115,7 @@ pub async fn apply_harvest_event(
 }
 
 /// Batch retry: reset all failed harvest records to pending.
-pub async fn apply_harvest_retry(
+pub async fn apply_retry(
     pool: &PgPool,
     params: RetryHarvestParams<'_>,
 ) -> Result<PgQueryResult, Error> {

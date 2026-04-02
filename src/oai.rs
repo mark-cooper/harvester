@@ -131,26 +131,13 @@ impl fmt::Display for OaiIndexStatus {
 }
 
 /// Events that drive `oai_records.status` transitions.
+#[derive(Debug)]
 pub enum HarvestEvent<'a> {
     DownloadSucceeded,
     DownloadFailed { message: &'a str },
     MetadataExtracted { metadata: serde_json::Value },
     MetadataFailed { message: &'a str },
     HarvestRetryRequested,
-}
-
-/// Events that drive `oai_records.index_status` transitions.
-pub enum IndexEvent<'a> {
-    IndexSucceeded,
-    IndexFailed { message: &'a str },
-    PurgeSucceeded,
-    PurgeFailed { message: &'a str },
-    ReindexRequested,
-}
-
-pub struct HarvestTransition {
-    pub from: OaiRecordStatus,
-    pub to: OaiRecordStatus,
 }
 
 impl HarvestEvent<'_> {
@@ -180,20 +167,18 @@ impl HarvestEvent<'_> {
     }
 }
 
-pub enum IndexTransition {
-    /// Single-record: requires a specific record status, accepts either of two
-    /// index predecessor states, transitions to `to`.
-    SingleRecord {
-        required_status: OaiRecordStatus,
-        from: (OaiIndexStatus, OaiIndexStatus),
-        to: OaiIndexStatus,
-    },
-    /// Batch reset: matches records whose status is in `eligible_record_statuses`,
-    /// resets index_status to `to` regardless of current index_status.
-    BatchReset {
-        eligible_record_statuses: &'static [OaiRecordStatus],
-        to: OaiIndexStatus,
-    },
+pub struct HarvestTransition {
+    pub from: OaiRecordStatus,
+    pub to: OaiRecordStatus,
+}
+
+/// Events that drive `oai_records.index_status` transitions.
+pub enum IndexEvent<'a> {
+    IndexSucceeded,
+    IndexFailed { message: &'a str },
+    PurgeSucceeded,
+    PurgeFailed { message: &'a str },
+    ReindexRequested,
 }
 
 impl IndexEvent<'_> {
@@ -225,6 +210,22 @@ impl IndexEvent<'_> {
             },
         }
     }
+}
+
+pub enum IndexTransition {
+    /// Single-record: requires a specific record status, accepts either of two
+    /// index predecessor states, transitions to `to`.
+    SingleRecord {
+        required_status: OaiRecordStatus,
+        from: (OaiIndexStatus, OaiIndexStatus),
+        to: OaiIndexStatus,
+    },
+    /// Batch reset: matches records whose status is in `eligible_record_statuses`,
+    /// resets index_status to `to` regardless of current index_status.
+    BatchReset {
+        eligible_record_statuses: &'static [OaiRecordStatus],
+        to: OaiIndexStatus,
+    },
 }
 
 /// Compile-time check: adding a new OaiRecordStatus variant without updating

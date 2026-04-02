@@ -8,105 +8,69 @@ use std::{
 use quick_xml::{Reader, escape, events::Event};
 use serde_json::{Map, Value};
 
-use tracing::{error, info, warn};
-
 use crate::{
-    db::{
-        FetchRecordsParams, RecordTransitionParams, apply_harvest_event, fetch_records_by_status,
-    },
-    harvester::rules::RuleSet,
-    oai::{HarvestEvent, OaiRecordStatus},
+    harvester::{BatchStats, rules::RuleSet},
+    oai::{HarvestEvent, OaiRecordId, OaiRecordStatus},
 };
 
 use super::Harvester;
 
-const BATCH_SIZE: usize = 100;
-
 pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result<()> {
     let rules = RuleSet::load(File::open(rules)?)?;
-    let mut last_identifier: Option<String> = None;
-    let mut total_processed = 0usize;
-    let mut total_failed = 0usize;
-    let mut total_failed_to_mark = 0usize;
+    harvester
+        .run_batched(
+            OaiRecordStatus::Available,
+            "Extracted metadata for",
+            async |batch| process_batch(harvester, &rules, batch).await,
+        )
+        .await
+}
 
-    loop {
-        if harvester.is_shutdown() {
-            break;
-        }
-        let params = FetchRecordsParams {
-            endpoint: &harvester.config.endpoint,
-            metadata_prefix: &harvester.config.metadata_prefix,
-            status: OaiRecordStatus::Available,
-            last_identifier: last_identifier.as_deref(),
-        };
-        let batch = fetch_records_by_status(&harvester.pool, params).await?;
-        if batch.is_empty() {
-            break;
-        }
-
-        last_identifier = batch.last().map(|r| r.identifier.clone());
-
-        for record in &batch {
-            let path = harvester.config.data_dir.join(record.path());
-            let file = match File::open(&path) {
-                Ok(file) => file,
-                Err(error) => {
-                    let message =
-                        format!("Unable to open metadata file {}: {}", path.display(), error);
-                    handle_failure_mark_result(
-                        harvester,
-                        &record.identifier,
-                        &message,
-                        &mut total_failed,
-                        &mut total_failed_to_mark,
-                    )
-                    .await;
-                    continue;
-                }
-            };
-
-            match extract_metadata(&file, &rules) {
-                Ok(metadata) => {
-                    match update_record_metadata(harvester, &record.identifier, metadata).await {
-                        Ok(true) => total_processed += 1,
-                        Ok(false) => total_failed_to_mark += 1,
-                        Err(error) => {
-                            let message = format!("Unable to update parsed metadata: {}", error);
-                            handle_failure_mark_result(
-                                harvester,
-                                &record.identifier,
-                                &message,
-                                &mut total_failed,
-                                &mut total_failed_to_mark,
-                            )
-                            .await;
-                        }
-                    }
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    handle_failure_mark_result(
-                        harvester,
-                        &record.identifier,
-                        &message,
-                        &mut total_failed,
-                        &mut total_failed_to_mark,
-                    )
-                    .await;
-                }
-            }
-        }
-
-        if batch.len() < BATCH_SIZE {
-            break;
+async fn process_batch(
+    harvester: &Harvester,
+    rules: &RuleSet,
+    records: &[OaiRecordId],
+) -> BatchStats {
+    let mut stats = BatchStats::default();
+    for record in records {
+        match process_record(harvester, rules, record).await {
+            Ok(true) => stats.processed += 1,
+            Ok(false) => stats.failed += 1,
+            Err(_) => stats.failed += 1,
         }
     }
+    stats
+}
 
-    info!(
-        "Extracted metadata for {} records (failed: {}, failed-to-mark: {})",
-        total_processed, total_failed, total_failed_to_mark
-    );
-    Ok(())
+async fn process_record(
+    harvester: &Harvester,
+    rules: &RuleSet,
+    record: &OaiRecordId,
+) -> anyhow::Result<bool> {
+    let path = harvester.config.data_dir.join(record.path());
+    let file = match File::open(&path) {
+        Ok(file) => file,
+        Err(error) => {
+            let message = format!("Unable to open metadata file {}: {}", path.display(), error);
+            return harvester
+                .update(record, &HarvestEvent::MetadataFailed { message: &message })
+                .await;
+        }
+    };
+
+    match extract_metadata(&file, rules) {
+        Ok(metadata) => {
+            harvester
+                .update(record, &HarvestEvent::MetadataExtracted { metadata })
+                .await
+        }
+        Err(error) => {
+            let message = error.to_string();
+            harvester
+                .update(record, &HarvestEvent::MetadataFailed { message: &message })
+                .await
+        }
+    }
 }
 
 fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<Value> {
@@ -193,51 +157,6 @@ fn extract_metadata(reader: impl Read, rules: &RuleSet) -> anyhow::Result<Value>
     Ok(Value::Object(json_map))
 }
 
-async fn handle_failure_mark_result(
-    harvester: &Harvester,
-    identifier: &str,
-    message: &str,
-    total_failed: &mut usize,
-    total_failed_to_mark: &mut usize,
-) {
-    match mark_record_failed(harvester, identifier, message).await {
-        Ok(true) => *total_failed += 1,
-        Ok(false) => *total_failed_to_mark += 1,
-        Err(update_error) => {
-            error!(
-                "Record {} failed but could not be marked failed (reason: {}; update error: {})",
-                identifier, message, update_error
-            );
-            *total_failed_to_mark += 1;
-        }
-    }
-}
-
-async fn mark_record_failed(
-    harvester: &Harvester,
-    identifier: &str,
-    message: &str,
-) -> anyhow::Result<bool> {
-    let params = RecordTransitionParams {
-        endpoint: &harvester.config.endpoint,
-        metadata_prefix: &harvester.config.metadata_prefix,
-        identifier,
-    };
-    let event = HarvestEvent::MetadataFailed { message };
-
-    match apply_harvest_event(&harvester.pool, params, &event).await {
-        Ok(result) if result.rows_affected() == 1 => Ok(true),
-        Ok(_) => {
-            warn!(
-                "Skipped transition available->failed for {} (record is no longer available)",
-                identifier
-            );
-            Ok(false)
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
 /// Check if element stack ends with the given path
 /// e.g., stack ["ead", "archdesc", "repository", "corpname"] matches path ["repository", "corpname"]
 fn stack_matches_path(stack: &[String], path: &[String]) -> bool {
@@ -249,30 +168,6 @@ fn stack_matches_path(stack: &[String], path: &[String]) -> bool {
         .rev()
         .zip(path.iter().rev())
         .all(|(s, p)| s == p)
-}
-
-async fn update_record_metadata(
-    harvester: &Harvester,
-    identifier: &str,
-    metadata: Value,
-) -> anyhow::Result<bool> {
-    let params = RecordTransitionParams {
-        endpoint: &harvester.config.endpoint,
-        metadata_prefix: &harvester.config.metadata_prefix,
-        identifier,
-    };
-    let event = HarvestEvent::MetadataExtracted { metadata };
-
-    let result = apply_harvest_event(&harvester.pool, params, &event).await?;
-    if result.rows_affected() == 0 {
-        warn!(
-            "Skipped transition available->parsed for {} (record is no longer available)",
-            identifier
-        );
-        return Ok(false);
-    }
-
-    Ok(true)
 }
 
 #[cfg(test)]
