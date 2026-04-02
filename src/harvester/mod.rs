@@ -12,9 +12,8 @@ use sqlx::PgPool;
 use tracing::info;
 
 use crate::OaiRecordId;
-use crate::db::{
-    FetchRecordsParams, RecordTransitionParams, apply_transition, fetch_records_by_status,
-};
+use crate::db::harvester::{RecordTransitionParams, transition};
+use crate::db::{FetchRecordsParams, fetch_records_by_status};
 use crate::oai::{HarvestEvent, OaiConfig, OaiRecordStatus};
 
 const BATCH_SIZE: usize = 100;
@@ -128,7 +127,7 @@ impl Harvester {
             identifier: &record.identifier,
         };
 
-        match apply_transition(&self.pool, params, event).await {
+        match transition(&self.pool, params, event).await {
             Ok(result) => {
                 if result.rows_affected() == 0 {
                     Ok(false)

@@ -2,10 +2,10 @@ mod support;
 
 use harvester::{
     OaiRecordId,
-    db::{
-        FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexStatusParams, apply_index_event,
-        apply_reindex, fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
-        fetch_pending_records_for_indexing, fetch_pending_records_for_purging,
+    db::indexer::{
+        FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexStatusParams,
+        fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
+        fetch_pending_records_for_indexing, fetch_pending_records_for_purging, reindex, transition,
     },
     oai::IndexEvent,
 };
@@ -223,7 +223,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     )
     .await?;
 
-    apply_index_event(
+    transition(
         &pool,
         UpdateIndexStatusParams {
             endpoint: ENDPOINT,
@@ -241,7 +241,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     assert_eq!(snapshot.index_message, "traject failed");
     assert!(!snapshot.indexed_at_set);
 
-    apply_index_event(
+    transition(
         &pool,
         UpdateIndexStatusParams {
             endpoint: ENDPOINT,
@@ -257,7 +257,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     assert!(snapshot.indexed_at_set);
     assert!(!snapshot.purged_at_set);
 
-    apply_index_event(
+    transition(
         &pool,
         UpdateIndexStatusParams {
             endpoint: ENDPOINT,
@@ -274,7 +274,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     assert_eq!(snapshot.index_attempts, 1);
     assert_eq!(snapshot.index_message, "solr failed");
 
-    apply_index_event(
+    transition(
         &pool,
         UpdateIndexStatusParams {
             endpoint: ENDPOINT,
@@ -335,7 +335,7 @@ async fn reindex_requeues_only_matching_repository_records() -> anyhow::Result<(
     )
     .await?;
 
-    let result = apply_reindex(
+    let result = reindex(
         &pool,
         ReindexStateParams {
             endpoint: ENDPOINT,

@@ -9,10 +9,10 @@ use tracing::{error, info, warn};
 
 use crate::{
     OaiRecordId,
-    db::{
-        FetchIndexCandidatesParams, UpdateIndexStatusParams, apply_index_event,
-        fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
-        fetch_pending_records_for_indexing, fetch_pending_records_for_purging,
+    db::indexer::{
+        FetchIndexCandidatesParams, UpdateIndexStatusParams, fetch_failed_records_for_indexing,
+        fetch_failed_records_for_purging, fetch_pending_records_for_indexing,
+        fetch_pending_records_for_purging, transition,
     },
     oai::IndexEvent,
 };
@@ -168,7 +168,7 @@ async fn mark_success(
         RecordPhase::Purge => IndexEvent::PurgeSucceeded,
     };
 
-    let result = apply_index_event(&ctx.pool, params, &event).await?;
+    let result = transition(&ctx.pool, params, &event).await?;
 
     if result.rows_affected() == 0 {
         let transition = match phase {
@@ -202,7 +202,7 @@ async fn mark_failure(
         RecordPhase::Purge => IndexEvent::PurgeFailed { message },
     };
 
-    let result = apply_index_event(&ctx.pool, params, &event).await?;
+    let result = transition(&ctx.pool, params, &event).await?;
 
     if result.rows_affected() == 0 {
         let transition = match phase {

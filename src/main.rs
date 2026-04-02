@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use harvester::{
     ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, Harvester, HarvesterArgs,
     IndexRunOptions, IndexerContext, OaiConfig, build_arclight_config,
-    db::{self, ReindexStateParams, RetryHarvestParams},
+    db::{self, harvester::RetryHarvestParams, indexer::ReindexStateParams},
     expand_path, run_indexer,
 };
 use tracing::info;
@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
                     endpoint: &cfg.endpoint,
                     metadata_prefix: &cfg.metadata_prefix,
                 };
-                let result = db::apply_retry(&pool, params).await?;
+                let result = db::harvester::retry(&pool, params).await?;
                 info!(
                     "Reset {} failed record(s) to pending",
                     result.rows_affected()
@@ -106,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
                     oai_repository: &cfg.oai_repository,
                 };
 
-                let result = db::apply_reindex(&pool, params).await?;
+                let result = db::indexer::reindex(&pool, params).await?;
                 info!(
                     "Requeued {} record(s) to pending index status",
                     result.rows_affected()

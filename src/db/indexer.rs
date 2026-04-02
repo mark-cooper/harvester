@@ -258,7 +258,7 @@ pub async fn fetch_failed_records_for_purging(
 
 /// Apply an index event to a single record.
 /// Uses a static SQL query per event variant.
-pub async fn apply_index_event(
+pub async fn transition(
     pool: &PgPool,
     params: UpdateIndexStatusParams<'_>,
     event: &IndexEvent<'_>,
@@ -270,7 +270,7 @@ pub async fn apply_index_event(
     } = event.transition()
     else {
         return Err(sqlx::Error::Protocol(
-            "ReindexRequested is a batch operation; use apply_reindex()".into(),
+            "ReindexRequested is a batch operation; use reindex()".into(),
         ));
     };
 
@@ -386,7 +386,7 @@ pub async fn apply_index_event(
 }
 
 /// Batch reindex: reset index_status to pending for all parsed/deleted records.
-pub async fn apply_reindex(
+pub async fn reindex(
     pool: &PgPool,
     params: ReindexStateParams<'_>,
 ) -> Result<PgQueryResult, Error> {

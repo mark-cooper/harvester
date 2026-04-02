@@ -31,7 +31,7 @@ pub struct RecordTransitionParams<'a> {
 
 /// Apply a harvest event (transition state) for a single record.
 /// Uses a static SQL query per event variant (no dynamic SQL construction).
-pub async fn apply_transition(
+pub async fn transition(
     pool: &PgPool,
     params: RecordTransitionParams<'_>,
     event: &HarvestEvent<'_>,
@@ -115,10 +115,7 @@ pub async fn apply_transition(
 }
 
 /// Batch retry: reset all failed harvest records to pending.
-pub async fn apply_retry(
-    pool: &PgPool,
-    params: RetryHarvestParams<'_>,
-) -> Result<PgQueryResult, Error> {
+pub async fn retry(pool: &PgPool, params: RetryHarvestParams<'_>) -> Result<PgQueryResult, Error> {
     let HarvestTransition { from, to } = HarvestEvent::HarvestRetryRequested.transition();
     sqlx::query(
         r#"

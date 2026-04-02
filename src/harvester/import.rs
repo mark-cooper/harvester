@@ -4,7 +4,7 @@ use tokio::time::timeout;
 use tracing::info;
 
 use crate::{
-    db::{ImportParams, ImportStats, batch_upsert_records},
+    db::harvester::{ImportParams, ImportStats, batch_upsert_records},
     oai::OaiRecordImport,
 };
 

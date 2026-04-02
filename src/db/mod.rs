@@ -1,15 +1,6 @@
-mod harvester;
-mod indexer;
+pub mod harvester;
+pub mod indexer;
 mod summarizer;
-
-pub(crate) use harvester::{ImportParams, ImportStats, batch_upsert_records};
-pub use harvester::{RecordTransitionParams, RetryHarvestParams, apply_retry, apply_transition};
-pub use indexer::{
-    FetchIndexCandidatesParams, UpdateIndexStatusParams, apply_index_event,
-    fetch_failed_records_for_indexing, fetch_failed_records_for_purging,
-    fetch_pending_records_for_indexing, fetch_pending_records_for_purging,
-};
-pub use indexer::{ReindexStateParams, apply_reindex};
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Error, PgPool};
