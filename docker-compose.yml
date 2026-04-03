@@ -4,19 +4,19 @@ services:
       context: .
     image: harvester:latest
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
     env_file:
       - .env
     environment:
-      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgres://admin:admin@postgres:5432/harvester}
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgres://admin:admin@db:5432/harvester}
       RULES_FILE: ${RULES_FILE_DOCKER:-/app/rules/default.txt}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
 
-  postgres:
+  db:
     image: postgres:18-alpine
     environment:
       POSTGRES_USER: admin
@@ -25,7 +25,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql
+      - db-data:/var/lib/postgresql
       - ./scripts/init_db.sh:/docker-entrypoint-initdb.d/10-init_db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U admin -d postgres"]
@@ -36,14 +36,14 @@ services:
   postgrest:
     image: postgrest/postgrest:latest
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
     env_file:
       - .env
     environment:
-      PGRST_DB_URI: ${PGRST_DB_URI_DOCKER:-postgres://admin:admin@postgres:5432/harvester}
+      PGRST_DB_URI: ${PGRST_DB_URI_DOCKER:-postgres://admin:admin@db:5432/harvester}
     ports:
       - "3000:3000"
 
 volumes:
-  postgres-data:
+  db-data:
