@@ -11,12 +11,6 @@ DIST_DIR := dist
 LINUX_TARGET := x86_64-unknown-linux-gnu
 MACOS_ARM_TARGET := aarch64-apple-darwin
 
-help: ## Show this help message
-	@echo 'Usage: make [target]'
-	@echo ''
-	@echo 'Available targets:'
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
-
 build: ## Build for current platform (release mode)
 	cargo build --release
 
@@ -61,6 +55,7 @@ lint: ## Run clippy
 
 install: build ## Install binary to ~/.cargo/bin
 	cargo install --path .
+	bundle install
 
 release: clean build-all ## Create release builds for distribution
 	@echo "Release builds created in $(DIST_DIR)/"
@@ -68,3 +63,10 @@ release: clean build-all ## Create release builds for distribution
 
 test: ## Run tests
 	cargo test
+
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Available targets:'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
+
