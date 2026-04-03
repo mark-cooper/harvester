@@ -90,6 +90,15 @@ PGHOST=localhost PGUSER=admin PGPASSWORD=admin psql \
 ./scripts/init_db.sh
 ```
 
+Resetting index failed records to pending via the db:
+
+```
+UPDATE oai_records
+SET index_status = 'pending', index_attempts = 0, index_message = ''
+WHERE index_status = 'index_failed'
+AND endpoint = 'https://example.com/oai';
+```
+
 ## Docker
 
 ```bash
