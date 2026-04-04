@@ -8,13 +8,12 @@ use sqlx::PgPool;
 use tracing::{error, info};
 
 use crate::{
-    OaiRecordId,
+    OaiRecordId, batch,
     db::indexer::{FetchIndexCandidatesParams, UpdateIndexStatusParams, fetch, transition},
     oai::IndexEvent,
     oai::OaiRecordStatus,
 };
 
-const BATCH_SIZE: usize = 100;
 const CONCURRENCY: usize = 10;
 
 pub trait Indexer: Sync {
@@ -52,8 +51,111 @@ impl<T: Indexer> IndexRunner<T> {
         }
     }
 
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let stats = self.process_records().await?;
+
+        info!("Indexed records: {}", stats.indexed);
+        info!("Deleted records: {}", stats.deleted);
+        info!("Failed index operations: {}", stats.failed);
+
+        if stats.failed > 0 {
+            anyhow::bail!("index run completed with {} failed record(s)", stats.failed);
+        }
+
+        Ok(())
+    }
+
     fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Relaxed)
+    }
+
+    async fn fetch_batch(&self, last_identifier: Option<&str>) -> anyhow::Result<Vec<OaiRecordId>> {
+        let params = FetchIndexCandidatesParams {
+            endpoint: &self.config.endpoint,
+            metadata_prefix: &self.config.metadata_prefix,
+            oai_repository: &self.config.oai_repository,
+            selection_mode: self.config.run_options.selection_mode,
+            max_attempts: self.config.run_options.max_attempts,
+            message_filter: self.config.run_options.message_filter.as_deref(),
+            last_identifier,
+        };
+
+        Ok(fetch(&self.pool, params).await?)
+    }
+
+    async fn process_batch(&self, batch: &[OaiRecordId]) -> ProcessStats {
+        let mut stats = ProcessStats {
+            indexed: 0,
+            deleted: 0,
+            failed: 0,
+        };
+
+        if self.config.preview {
+            for record in batch {
+                match action_for(record.status) {
+                    RecordAction::Index => {
+                        info!("Would index record: {}", record.identifier);
+                        stats.indexed += 1;
+                    }
+                    RecordAction::Delete => {
+                        info!("Would delete record: {}", record.identifier);
+                        stats.deleted += 1;
+                    }
+                }
+            }
+        } else {
+            let results: Vec<_> = stream::iter(batch)
+                .map(|record| async move {
+                    let result = match action_for(record.status) {
+                        RecordAction::Index => self.indexer.index_record(record).await,
+                        RecordAction::Delete => self.indexer.delete_record(record).await,
+                    };
+
+                    (record, result)
+                })
+                .buffer_unordered(CONCURRENCY)
+                .collect()
+                .await;
+
+            for (record, result) in results {
+                let action = action_for(record.status);
+                match result {
+                    Ok(()) => {
+                        let event = success_event(action);
+                        if let Ok(true) = self.update(record, &event).await {
+                            match action {
+                                RecordAction::Index => stats.indexed += 1,
+                                RecordAction::Delete => stats.deleted += 1,
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        stats.failed += 1;
+                        let message = truncate_middle(&e.to_string(), 200, 200);
+                        error!("Failed to process: {}", message);
+                        let event = failure_event(action, &message);
+                        let _ = self.update(record, &event).await;
+                    }
+                }
+            }
+        }
+
+        stats
+    }
+
+    async fn process_records(&self) -> anyhow::Result<ProcessStats> {
+        let all = batch::run(
+            || self.is_shutdown(),
+            async |last_identifier| self.fetch_batch(last_identifier).await,
+            async |batch: &[OaiRecordId]| self.process_batch(batch).await,
+        )
+        .await?;
+
+        Ok(ProcessStats {
+            indexed: all.iter().map(|s| s.indexed).sum(),
+            deleted: all.iter().map(|s| s.deleted).sum(),
+            failed: all.iter().map(|s| s.failed).sum(),
+        })
     }
 
     async fn update(&self, record: &OaiRecordId, event: &IndexEvent<'_>) -> anyhow::Result<bool> {
@@ -67,20 +169,6 @@ impl<T: Indexer> IndexRunner<T> {
             Ok(result) => Ok(result.rows_affected() > 0),
             Err(_) => Ok(false),
         }
-    }
-
-    pub async fn run(&self) -> anyhow::Result<()> {
-        let stats = process_records(self).await?;
-
-        info!("Indexed records: {}", stats.indexed);
-        info!("Deleted records: {}", stats.deleted);
-        info!("Failed index operations: {}", stats.failed);
-
-        if stats.failed > 0 {
-            anyhow::bail!("index run completed with {} failed record(s)", stats.failed);
-        }
-
-        Ok(())
     }
 }
 
@@ -119,102 +207,6 @@ struct ProcessStats {
     indexed: usize,
     deleted: usize,
     failed: usize,
-}
-
-async fn process_records<T: Indexer>(runner: &IndexRunner<T>) -> anyhow::Result<ProcessStats> {
-    let mut last_identifier: Option<String> = None;
-    let mut indexed = 0usize;
-    let mut deleted = 0usize;
-    let mut failed = 0usize;
-
-    loop {
-        if runner.is_shutdown() {
-            break;
-        }
-        let batch = fetch_batch(runner, last_identifier.as_deref()).await?;
-        if batch.is_empty() {
-            break;
-        }
-
-        last_identifier = batch.last().map(|r| r.identifier.clone());
-
-        if runner.config.preview {
-            for record in &batch {
-                match action_for(record.status) {
-                    RecordAction::Index => {
-                        info!("Would index record: {}", record.identifier);
-                        indexed += 1;
-                    }
-                    RecordAction::Delete => {
-                        info!("Would delete record: {}", record.identifier);
-                        deleted += 1;
-                    }
-                }
-            }
-        } else {
-            let results: Vec<_> = stream::iter(&batch)
-                .map(|record| async move {
-                    let result = match action_for(record.status) {
-                        RecordAction::Index => runner.indexer.index_record(record).await,
-                        RecordAction::Delete => runner.indexer.delete_record(record).await,
-                    };
-
-                    (record, result)
-                })
-                .buffer_unordered(CONCURRENCY)
-                .collect()
-                .await;
-
-            for (record, result) in results {
-                let action = action_for(record.status);
-                match result {
-                    Ok(()) => {
-                        let event = success_event(action);
-                        if let Ok(true) = runner.update(record, &event).await {
-                            match action {
-                                RecordAction::Index => indexed += 1,
-                                RecordAction::Delete => deleted += 1,
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        failed += 1;
-                        let message = truncate_middle(&e.to_string(), 200, 200);
-                        error!("Failed to process: {}", message);
-                        let event = failure_event(action, &message);
-                        let _ = runner.update(record, &event).await;
-                    }
-                }
-            }
-        }
-
-        if batch.len() < BATCH_SIZE {
-            break;
-        }
-    }
-
-    Ok(ProcessStats {
-        indexed,
-        deleted,
-        failed,
-    })
-}
-
-async fn fetch_batch<T: Indexer>(
-    runner: &IndexRunner<T>,
-    last_identifier: Option<&str>,
-) -> anyhow::Result<Vec<OaiRecordId>> {
-    let params = FetchIndexCandidatesParams {
-        endpoint: &runner.config.endpoint,
-        metadata_prefix: &runner.config.metadata_prefix,
-        oai_repository: &runner.config.oai_repository,
-        selection_mode: runner.config.run_options.selection_mode,
-        max_attempts: runner.config.run_options.max_attempts,
-        message_filter: runner.config.run_options.message_filter.as_deref(),
-        last_identifier,
-    };
-
-    Ok(fetch(&runner.pool, params).await?)
 }
 
 #[derive(Clone, Copy)]

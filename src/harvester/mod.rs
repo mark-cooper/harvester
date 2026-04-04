@@ -14,10 +14,10 @@ use sqlx::PgPool;
 use tracing::info;
 
 use crate::OaiRecordId;
+use crate::batch;
 use crate::db::harvester::{FetchRecordsParams, RecordTransitionParams, fetch, transition};
 use crate::oai::{HarvestEvent, OaiConfig, OaiRecordStatus};
 
-const BATCH_SIZE: usize = 100;
 const CONCURRENT_DOWNLOADS: usize = 10;
 
 async fn oai_timeout<T>(
@@ -64,22 +64,6 @@ impl Harvester {
         }
     }
 
-    pub(crate) fn is_shutdown(&self) -> bool {
-        self.shutdown.load(Ordering::Relaxed)
-    }
-
-    async fn download(&self) -> anyhow::Result<()> {
-        download::run(self).await
-    }
-
-    async fn import(&self) -> anyhow::Result<()> {
-        import::run(self).await
-    }
-
-    async fn metadata(&self, rules: PathBuf) -> anyhow::Result<()> {
-        metadata::run(self, rules).await
-    }
-
     pub async fn run(&self, rules: Option<PathBuf>) -> anyhow::Result<()> {
         self.import().await?;
         if self.is_shutdown() {
@@ -101,41 +85,45 @@ impl Harvester {
         Ok(())
     }
 
+    pub(crate) fn is_shutdown(&self) -> bool {
+        self.shutdown.load(Ordering::Relaxed)
+    }
+
+    async fn download(&self) -> anyhow::Result<()> {
+        download::run(self).await
+    }
+
+    async fn import(&self) -> anyhow::Result<()> {
+        import::run(self).await
+    }
+
+    async fn metadata(&self, rules: PathBuf) -> anyhow::Result<()> {
+        metadata::run(self, rules).await
+    }
+
     async fn run_batched(
         &self,
         status: OaiRecordStatus,
         label: &str,
         process: impl AsyncFn(&[OaiRecordId]) -> BatchStats,
     ) -> anyhow::Result<()> {
-        let mut last_identifier: Option<String> = None;
-        let mut total_processed = 0usize;
-        let mut total_failed = 0usize;
+        let all = batch::run(
+            || self.is_shutdown(),
+            async |last_identifier| {
+                let params = FetchRecordsParams {
+                    endpoint: &self.config.endpoint,
+                    metadata_prefix: &self.config.metadata_prefix,
+                    status,
+                    last_identifier,
+                };
+                fetch(&self.pool, params).await.map_err(Into::into)
+            },
+            &process,
+        )
+        .await?;
 
-        loop {
-            if self.is_shutdown() {
-                break;
-            }
-            let params = FetchRecordsParams {
-                endpoint: &self.config.endpoint,
-                metadata_prefix: &self.config.metadata_prefix,
-                status,
-                last_identifier: last_identifier.as_deref(),
-            };
-            let batch = fetch(&self.pool, params).await?;
-            if batch.is_empty() {
-                break;
-            }
-
-            last_identifier = batch.last().map(|r| r.identifier.clone());
-            let stats = process(&batch).await;
-            total_processed += stats.processed;
-            total_failed += stats.failed;
-
-            if batch.len() < BATCH_SIZE {
-                break;
-            }
-        }
-
+        let total_processed: usize = all.iter().map(|s| s.processed).sum();
+        let total_failed: usize = all.iter().map(|s| s.failed).sum();
         info!("{label} {total_processed} records (failed: {total_failed})");
         Ok(())
     }

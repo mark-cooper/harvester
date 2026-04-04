@@ -1,3 +1,4 @@
+mod batch;
 pub mod db;
 mod harvester;
 mod indexer;
