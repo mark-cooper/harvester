@@ -158,7 +158,7 @@ pub async fn transition(
             .execute(pool)
             .await
         }
-        IndexEvent::IndexFailed { message } => {
+        IndexEvent::IndexFailed { message } | IndexEvent::PurgeFailed { message } => {
             sqlx::query(
                 r#"
                 UPDATE oai_records
@@ -204,32 +204,6 @@ pub async fn transition(
             .bind(params.metadata_prefix)
             .bind(params.identifier)
             .bind(to.as_str())
-            .bind(required_status.as_str())
-            .bind(from_a.as_str())
-            .bind(from_b.as_str())
-            .execute(pool)
-            .await
-        }
-        IndexEvent::PurgeFailed { message } => {
-            sqlx::query(
-                r#"
-                UPDATE oai_records
-                SET index_status = $4,
-                    index_message = $5,
-                    index_attempts = index_attempts + 1,
-                    index_last_checked_at = NOW()
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND identifier = $3
-                  AND status = $6
-                  AND (index_status = $7 OR index_status = $8)
-                "#,
-            )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(params.identifier)
-            .bind(to.as_str())
-            .bind(message)
             .bind(required_status.as_str())
             .bind(from_a.as_str())
             .bind(from_b.as_str())
