@@ -31,15 +31,11 @@ async fn process_batch(
     rules: &RuleSet,
     records: &[OaiRecordId],
 ) -> BatchStats {
-    let mut stats = BatchStats::default();
+    let mut results = Vec::with_capacity(records.len());
     for record in records {
-        match process_record(harvester, rules, record).await {
-            Ok(true) => stats.processed += 1,
-            Ok(false) => stats.failed += 1,
-            Err(_) => stats.failed += 1,
-        }
+        results.push(process_record(harvester, rules, record).await);
     }
-    stats
+    BatchStats::from_results(results)
 }
 
 async fn process_record(

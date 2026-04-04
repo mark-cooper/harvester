@@ -4,9 +4,11 @@ mod import;
 mod metadata;
 mod rules;
 
+use std::future::Future;
 use std::path::{self, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use sqlx::PgPool;
 use tracing::info;
@@ -18,10 +20,33 @@ use crate::oai::{HarvestEvent, OaiConfig, OaiRecordStatus};
 const BATCH_SIZE: usize = 100;
 const CONCURRENT_DOWNLOADS: usize = 10;
 
+async fn oai_timeout<T>(
+    label: &str,
+    duration: Duration,
+    future: impl Future<Output = T>,
+) -> anyhow::Result<T> {
+    tokio::time::timeout(duration, future)
+        .await
+        .map_err(|_| anyhow::anyhow!("OAI {} timed out after {}s", label, duration.as_secs()))
+}
+
 #[derive(Default)]
 struct BatchStats {
     processed: usize,
     failed: usize,
+}
+
+impl BatchStats {
+    fn from_results(results: impl IntoIterator<Item = anyhow::Result<bool>>) -> Self {
+        let mut stats = Self::default();
+        for result in results {
+            match result {
+                Ok(true) => stats.processed += 1,
+                Ok(false) | Err(_) => stats.failed += 1,
+            }
+        }
+        stats
+    }
 }
 
 pub struct Harvester {

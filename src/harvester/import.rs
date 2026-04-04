@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use tokio::time::timeout;
 use tracing::info;
 
 use crate::{
@@ -8,7 +7,7 @@ use crate::{
     oai::OaiRecordImport,
 };
 
-use super::Harvester;
+use super::{Harvester, oai_timeout};
 
 use oai_pmh::{Client, ListIdentifiersArgs};
 
@@ -27,22 +26,11 @@ async fn process(harvester: &Harvester) -> anyhow::Result<ImportStats> {
     let duration = Duration::from_secs(harvester.config.oai_timeout);
     let client = Client::new(&harvester.config.endpoint)?;
 
-    timeout(duration, client.identify()).await.map_err(|_| {
-        anyhow::anyhow!(
-            "OAI identify timed out after {}s",
-            harvester.config.oai_timeout
-        )
-    })??;
+    oai_timeout("identify", duration, client.identify()).await??;
 
     let args = ListIdentifiersArgs::new(&harvester.config.metadata_prefix);
-    let mut stream = timeout(duration, client.list_identifiers(args))
-        .await
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "OAI list_identifiers timed out after {}s",
-                harvester.config.oai_timeout
-            )
-        })??;
+    let mut stream =
+        oai_timeout("list_identifiers", duration, client.list_identifiers(args)).await??;
 
     let params = ImportParams {
         endpoint: &harvester.config.endpoint,
@@ -51,12 +39,9 @@ async fn process(harvester: &Harvester) -> anyhow::Result<ImportStats> {
     let mut batch = Vec::with_capacity(BATCH_SIZE);
     let mut total = ImportStats::default();
 
-    while let Some(response) = timeout(duration, stream.try_next()).await.map_err(|_| {
-        anyhow::anyhow!(
-            "OAI list_identifiers page fetch timed out after {}s",
-            harvester.config.oai_timeout
-        )
-    })?? {
+    while let Some(response) =
+        oai_timeout("list_identifiers page fetch", duration, stream.try_next()).await??
+    {
         if harvester.is_shutdown() {
             break;
         }

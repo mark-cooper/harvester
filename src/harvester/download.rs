@@ -32,16 +32,7 @@ async fn process_batch(
         .collect()
         .await;
 
-    let mut stats = BatchStats::default();
-    for result in results {
-        match result {
-            Ok(true) => stats.processed += 1,
-            Ok(false) => stats.failed += 1,
-            Err(_) => stats.failed += 1,
-        }
-    }
-
-    stats
+    BatchStats::from_results(results)
 }
 
 async fn process_record(
