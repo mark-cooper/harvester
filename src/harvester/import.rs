@@ -7,7 +7,7 @@ use crate::{
     oai::OaiRecordImport,
 };
 
-use super::{Harvester, oai_timeout};
+use super::Harvester;
 
 use oai_pmh::{Client, ListIdentifiersArgs};
 
@@ -67,4 +67,14 @@ async fn process(harvester: &Harvester) -> anyhow::Result<ImportStats> {
     }
 
     Ok(total)
+}
+
+async fn oai_timeout<T>(
+    label: &str,
+    duration: Duration,
+    future: impl Future<Output = T>,
+) -> anyhow::Result<T> {
+    tokio::time::timeout(duration, future)
+        .await
+        .map_err(|_| anyhow::anyhow!("OAI {} timed out after {}s", label, duration.as_secs()))
 }

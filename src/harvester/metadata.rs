@@ -18,7 +18,7 @@ use super::Harvester;
 pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result<()> {
     let rules = RuleSet::load(File::open(rules)?)?;
     harvester
-        .run_batched(
+        .batched(
             OaiRecordStatus::Available,
             "Extracted metadata for",
             async |batch| process_batch(harvester, &rules, batch).await,

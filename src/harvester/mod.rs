@@ -4,11 +4,9 @@ mod import;
 mod metadata;
 mod rules;
 
-use std::future::Future;
 use std::path::{self, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use sqlx::PgPool;
 use tracing::info;
@@ -20,33 +18,26 @@ use crate::oai::{HarvestEvent, OaiConfig, OaiRecordStatus};
 
 const CONCURRENT_DOWNLOADS: usize = 10;
 
-async fn oai_timeout<T>(
-    label: &str,
-    duration: Duration,
-    future: impl Future<Output = T>,
-) -> anyhow::Result<T> {
-    tokio::time::timeout(duration, future)
-        .await
-        .map_err(|_| anyhow::anyhow!("OAI {} timed out after {}s", label, duration.as_secs()))
-}
-
-#[derive(Default)]
-struct BatchStats {
-    processed: usize,
-    failed: usize,
-}
-
-impl BatchStats {
-    fn from_results(results: impl IntoIterator<Item = anyhow::Result<bool>>) -> Self {
-        let mut stats = Self::default();
-        for result in results {
-            match result {
-                Ok(true) => stats.processed += 1,
-                Ok(false) | Err(_) => stats.failed += 1,
-            }
-        }
-        stats
+pub async fn perform(harvester: &Harvester, rules: Option<PathBuf>) -> anyhow::Result<()> {
+    import::run(harvester).await?;
+    if harvester.is_shutdown() {
+        return Ok(());
     }
+
+    download::run(harvester).await?;
+    if harvester.is_shutdown() {
+        return Ok(());
+    }
+
+    if let Some(rules) = rules {
+        let rules = path::absolute(rules)?;
+        if !rules.is_file() {
+            anyhow::bail!("rules file was not found");
+        }
+        metadata::run(harvester, rules).await?;
+    }
+
+    Ok(())
 }
 
 pub struct Harvester {
@@ -64,44 +55,11 @@ impl Harvester {
         }
     }
 
-    pub async fn run(&self, rules: Option<PathBuf>) -> anyhow::Result<()> {
-        self.import().await?;
-        if self.is_shutdown() {
-            return Ok(());
-        }
-        self.download().await?;
-        if self.is_shutdown() {
-            return Ok(());
-        }
-
-        if let Some(rules) = rules {
-            let rules = path::absolute(rules)?;
-            if !rules.is_file() {
-                anyhow::bail!("rules file was not found");
-            }
-            self.metadata(rules).await?;
-        }
-
-        Ok(())
-    }
-
     pub(crate) fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Relaxed)
     }
 
-    async fn download(&self) -> anyhow::Result<()> {
-        download::run(self).await
-    }
-
-    async fn import(&self) -> anyhow::Result<()> {
-        import::run(self).await
-    }
-
-    async fn metadata(&self, rules: PathBuf) -> anyhow::Result<()> {
-        metadata::run(self, rules).await
-    }
-
-    async fn run_batched(
+    async fn batched(
         &self,
         status: OaiRecordStatus,
         label: &str,
@@ -149,5 +107,24 @@ impl Harvester {
             }
             Err(_) => Ok(false),
         }
+    }
+}
+
+#[derive(Default)]
+struct BatchStats {
+    processed: usize,
+    failed: usize,
+}
+
+impl BatchStats {
+    fn from_results(results: impl IntoIterator<Item = anyhow::Result<bool>>) -> Self {
+        let mut stats = Self::default();
+        for result in results {
+            match result {
+                Ok(true) => stats.processed += 1,
+                Ok(false) | Err(_) => stats.failed += 1,
+            }
+        }
+        stats
     }
 }

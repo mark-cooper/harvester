@@ -1,13 +1,12 @@
-use std::path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand};
+use harvester::build_arclight_config;
 use harvester::{
-    ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, Harvester, HarvesterArgs,
-    IndexRunOptions, IndexRunner, IndexRunnerConfig, OaiConfig, build_arclight_config,
-    db::{self, harvester::RetryHarvestParams, indexer::ReindexStateParams},
-    expand_path,
+    ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, HarvesterArgs, IndexRunOptions,
+    IndexRunner, IndexRunnerConfig,
+    db::{self, indexer::ReindexStateParams},
 };
 use tracing::info;
 
@@ -72,31 +71,7 @@ async fn main() -> anyhow::Result<()> {
 
     match args.command {
         Commands::Harvest(cfg) => {
-            info!("Harvesting records from {}", cfg.endpoint);
-
-            if cfg.retry {
-                let params = RetryHarvestParams {
-                    endpoint: &cfg.endpoint,
-                    metadata_prefix: &cfg.metadata_prefix,
-                };
-                let result = db::harvester::retry(&pool, params).await?;
-                info!(
-                    "Reset {} failed record(s) to pending",
-                    result.rows_affected()
-                );
-            }
-
-            let data_dir = path::absolute(expand_path(&cfg.dir))?;
-
-            let config = OaiConfig {
-                data_dir,
-                endpoint: cfg.endpoint,
-                metadata_prefix: cfg.metadata_prefix,
-                oai_timeout: cfg.oai_timeout,
-                oai_retries: cfg.oai_retries,
-            };
-            let harvester = Harvester::new(config, pool, shutdown.clone());
-            harvester.run(cfg.rules.map(|p| expand_path(&p))).await?;
+            harvester::harvest(cfg, pool, shutdown).await?;
         }
         Commands::Index(IndexCommands::ArcLight(cfg)) => {
             if cfg.reindex {

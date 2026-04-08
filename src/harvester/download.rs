@@ -15,7 +15,7 @@ use super::Harvester;
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
     let client = Client::new(&harvester.config.endpoint)?;
     harvester
-        .run_batched(OaiRecordStatus::Pending, "Downloaded", async |batch| {
+        .batched(OaiRecordStatus::Pending, "Downloaded", async |batch| {
             process_batch(&client, harvester, batch).await
         })
         .await

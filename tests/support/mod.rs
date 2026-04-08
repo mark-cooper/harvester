@@ -139,7 +139,7 @@ pub async fn run_harvest(
         oai_retries: 0,
     };
     let harvester = Harvester::new(config, pool.clone(), Arc::new(AtomicBool::new(false)));
-    harvester.run(rules).await
+    harvester::perform(&harvester, rules).await
 }
 
 pub async fn insert_record(
