@@ -30,70 +30,6 @@ impl ArcLightIndexer {
         }
     }
 
-    fn solr_update_url(&self) -> String {
-        format!("{}/update", self.config.solr_url.trim_end_matches('/'))
-    }
-
-    fn timeout_duration(&self) -> Duration {
-        Duration::from_secs(self.config.record_timeout_seconds)
-    }
-
-    /// Delete a root document and all its nested children from Solr.
-    /// When `commit` is true, a hard commit is issued so the delete is visible
-    /// before any subsequent writes (needed for pre-index cleanup).
-    async fn solr_delete_by_root(&self, fingerprint: &str, commit: bool) -> anyhow::Result<()> {
-        let (payload, url) = if commit {
-            (
-                serde_json::json!({
-                    "delete": {
-                        "query": format!("_root_:{}", fingerprint)
-                    }
-                }),
-                format!("{}?commit=true", self.solr_update_url()),
-            )
-        } else {
-            (
-                serde_json::json!({
-                    "delete": {
-                        "query": format!("_root_:{}", fingerprint),
-                        "commitWithin": self.config.solr_commit_within_ms
-                    }
-                }),
-                self.solr_update_url(),
-            )
-        };
-
-        let response = match timeout(
-            self.timeout_duration(),
-            self.client
-                .post(&url)
-                .header("Content-Type", "application/json")
-                .body(payload.to_string())
-                .send(),
-        )
-        .await
-        {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => {
-                anyhow::bail!("failed to call Solr delete API: {}", error);
-            }
-            Err(_) => {
-                anyhow::bail!(
-                    "Solr delete timed out after {}s",
-                    self.config.record_timeout_seconds
-                );
-            }
-        };
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Solr delete API returned {}: {}", status, body);
-        }
-
-        Ok(())
-    }
-
     async fn run_traject(&self, record: &OaiRecordId) -> anyhow::Result<Output> {
         let path = self.config.dir.join(record.path());
 
@@ -165,6 +101,70 @@ impl ArcLightIndexer {
             stdout,
             stderr,
         })
+    }
+
+    /// Delete a root document and all its nested children from Solr.
+    /// When `commit` is true, a hard commit is issued so the delete is visible
+    /// before any subsequent writes (needed for pre-index cleanup).
+    async fn solr_delete_by_root(&self, fingerprint: &str, commit: bool) -> anyhow::Result<()> {
+        let (payload, url) = if commit {
+            (
+                serde_json::json!({
+                    "delete": {
+                        "query": format!("_root_:{}", fingerprint)
+                    }
+                }),
+                format!("{}?commit=true", self.solr_update_url()),
+            )
+        } else {
+            (
+                serde_json::json!({
+                    "delete": {
+                        "query": format!("_root_:{}", fingerprint),
+                        "commitWithin": self.config.solr_commit_within_ms
+                    }
+                }),
+                self.solr_update_url(),
+            )
+        };
+
+        let response = match timeout(
+            self.timeout_duration(),
+            self.client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(payload.to_string())
+                .send(),
+        )
+        .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => {
+                anyhow::bail!("failed to call Solr delete API: {}", error);
+            }
+            Err(_) => {
+                anyhow::bail!(
+                    "Solr delete timed out after {}s",
+                    self.config.record_timeout_seconds
+                );
+            }
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Solr delete API returned {}: {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    fn solr_update_url(&self) -> String {
+        format!("{}/update", self.config.solr_url.trim_end_matches('/'))
+    }
+
+    fn timeout_duration(&self) -> Duration {
+        Duration::from_secs(self.config.record_timeout_seconds)
     }
 }
 

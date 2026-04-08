@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 pub use harvester::cli::{HarvesterArgs, harvest};
 pub use harvester::{Harvester, perform};
 pub use indexer::arclight::ArcLightIndexer;
-pub use indexer::arclight::cli::ArcLightArgs;
+pub use indexer::arclight::cli::{ArcLightArgs, index};
 pub use indexer::arclight::config::{
     ARCLIGHT_METADATA_PREFIX, ArcLightIndexerConfig, build_config as build_arclight_config,
 };

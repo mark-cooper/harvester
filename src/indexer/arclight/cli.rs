@@ -1,6 +1,20 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use clap::Args;
+use sqlx::{Pool, Postgres};
+use tracing::info;
+
+use super::{
+    ArcLightIndexer,
+    config::{ARCLIGHT_METADATA_PREFIX, build_config},
+};
+use crate::{
+    db::{self, indexer::ReindexStateParams},
+    indexer::{IndexRunOptions, IndexRunner, IndexRunnerConfig},
+};
 
 #[derive(Debug, Args)]
 pub struct ArcLightArgs {
@@ -57,4 +71,48 @@ pub struct ArcLightArgs {
     /// Reset index state to pending before running (reindex all parsed/deleted records)
     #[arg(long, default_value_t = false, conflicts_with = "retry")]
     pub reindex: bool,
+}
+
+pub async fn index(
+    cfg: ArcLightArgs,
+    pool: Pool<Postgres>,
+    shutdown: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    info!("Indexing records into {}", cfg.repository);
+
+    if cfg.reindex {
+        let params = ReindexStateParams {
+            endpoint: &cfg.oai_endpoint,
+            metadata_prefix: ARCLIGHT_METADATA_PREFIX,
+            oai_repository: &cfg.oai_repository,
+        };
+        let result = db::indexer::reindex(&pool, params).await?;
+        info!(
+            "Requeued {} record(s) to pending index status",
+            result.rows_affected()
+        );
+    }
+
+    let run_options = if cfg.retry {
+        IndexRunOptions::failed_only(cfg.message_filter.clone(), cfg.max_attempts)
+    } else {
+        IndexRunOptions::pending_only()
+    };
+
+    let oai_endpoint = cfg.oai_endpoint.clone();
+    let oai_repository = cfg.oai_repository.clone();
+    let preview = cfg.preview;
+
+    let config = build_config(cfg)?;
+    let indexer = ArcLightIndexer::new(config);
+
+    let runner_config = IndexRunnerConfig {
+        endpoint: oai_endpoint,
+        metadata_prefix: ARCLIGHT_METADATA_PREFIX.to_string(),
+        oai_repository,
+        run_options,
+        preview,
+    };
+    let runner = IndexRunner::new(indexer, runner_config, pool, shutdown);
+    runner.run().await
 }

@@ -2,12 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand};
-use harvester::build_arclight_config;
-use harvester::{
-    ARCLIGHT_METADATA_PREFIX, ArcLightArgs, ArcLightIndexer, HarvesterArgs, IndexRunOptions,
-    IndexRunner, IndexRunnerConfig,
-    db::{self, indexer::ReindexStateParams},
-};
+use harvester::{ArcLightArgs, HarvesterArgs, db};
 use tracing::info;
 
 /// OAI-PMH harvester
@@ -74,45 +69,7 @@ async fn main() -> anyhow::Result<()> {
             harvester::harvest(cfg, pool, shutdown).await?;
         }
         Commands::Index(IndexCommands::ArcLight(cfg)) => {
-            if cfg.reindex {
-                let params = ReindexStateParams {
-                    endpoint: &cfg.oai_endpoint,
-                    metadata_prefix: ARCLIGHT_METADATA_PREFIX,
-                    oai_repository: &cfg.oai_repository,
-                };
-
-                let result = db::indexer::reindex(&pool, params).await?;
-                info!(
-                    "Requeued {} record(s) to pending index status",
-                    result.rows_affected()
-                );
-            }
-
-            let run_option = if cfg.retry {
-                IndexRunOptions::failed_only(cfg.message_filter.clone(), cfg.max_attempts)
-            } else {
-                IndexRunOptions::pending_only()
-            };
-
-            info!("Indexing records into {}", cfg.repository);
-
-            let oai_endpoint = cfg.oai_endpoint.clone();
-            let oai_repository = cfg.oai_repository.clone();
-            let preview = cfg.preview;
-
-            let config = build_arclight_config(cfg)?;
-            let indexer = ArcLightIndexer::new(config);
-
-            let runner_config = IndexRunnerConfig {
-                endpoint: oai_endpoint,
-                metadata_prefix: ARCLIGHT_METADATA_PREFIX.to_string(),
-                oai_repository,
-                run_options: run_option,
-                preview,
-            };
-            let runner = IndexRunner::new(indexer, runner_config, pool, shutdown.clone());
-
-            runner.run().await?;
+            harvester::index(cfg, pool, shutdown).await?;
         }
     }
 
