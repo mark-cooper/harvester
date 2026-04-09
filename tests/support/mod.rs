@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::Context;
-use harvester::{ARCLIGHT_METADATA_PREFIX, Harvester, OaiConfig};
+use harvester::{ARCLIGHT_METADATA_PREFIX, Harvester, OaiConfig, RepositoryKey};
 use sqlx::{
     PgPool, Row,
     migrate::Migrator,
@@ -87,6 +87,14 @@ impl Drop for MockOaiServer {
     }
 }
 
+pub fn metadata(repository: &str) -> serde_json::Value {
+    serde_json::json!({ "repository": [repository] })
+}
+
+pub fn repo_key(endpoint: &str) -> RepositoryKey {
+    RepositoryKey::new(endpoint, METADATA_PREFIX)
+}
+
 pub fn header_spec(identifier: &str, datestamp: &str, status: Option<&str>) -> HeaderSpec {
     HeaderSpec {
         identifier: identifier.to_string(),
@@ -133,8 +141,7 @@ pub async fn run_harvest(
 ) -> anyhow::Result<()> {
     let config = OaiConfig {
         data_dir,
-        endpoint: endpoint.to_string(),
-        metadata_prefix: METADATA_PREFIX.to_string(),
+        repo: harvester::RepositoryKey::new(endpoint, METADATA_PREFIX),
         oai_timeout: 10,
         oai_retries: 0,
     };

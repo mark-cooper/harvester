@@ -2,21 +2,9 @@ use sqlx::postgres::PgQueryResult;
 use sqlx::{Error, PgPool};
 
 use crate::oai::{
-    HarvestEvent, HarvestTransition, OaiIndexStatus, OaiRecordId, OaiRecordImport, OaiRecordStatus,
+    HarvestEvent, OaiIndexStatus, OaiRecordId, OaiRecordImport, OaiRecordStatus, RecordKey,
+    RepositoryKey,
 };
-
-pub(crate) struct FetchRecordsParams<'a> {
-    pub(crate) endpoint: &'a str,
-    pub(crate) metadata_prefix: &'a str,
-    pub(crate) status: OaiRecordStatus,
-    pub(crate) last_identifier: Option<&'a str>,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub(crate) struct ImportParams<'a> {
-    pub(crate) endpoint: &'a str,
-    pub(crate) metadata_prefix: &'a str,
-}
 
 #[derive(Default)]
 pub(crate) struct ImportStats {
@@ -33,20 +21,9 @@ impl ImportStats {
     }
 }
 
-pub struct RetryHarvestParams<'a> {
-    pub endpoint: &'a str,
-    pub metadata_prefix: &'a str,
-}
-
-pub struct RecordTransitionParams<'a> {
-    pub endpoint: &'a str,
-    pub metadata_prefix: &'a str,
-    pub identifier: &'a str,
-}
-
 pub(crate) async fn batch_upsert_records(
     pool: &PgPool,
-    params: ImportParams<'_>,
+    repo: &RepositoryKey,
     records: &[OaiRecordImport],
 ) -> anyhow::Result<ImportStats> {
     if records.is_empty() {
@@ -99,8 +76,8 @@ pub(crate) async fn batch_upsert_records(
         RETURNING status
         "#,
     )
-    .bind(params.endpoint)
-    .bind(params.metadata_prefix)
+    .bind(&repo.endpoint)
+    .bind(&repo.metadata_prefix)
     .bind(&identifiers)
     .bind(&datestamps)
     .bind(&statuses)
@@ -127,7 +104,9 @@ pub(crate) async fn batch_upsert_records(
 
 pub(crate) async fn fetch(
     pool: &PgPool,
-    params: FetchRecordsParams<'_>,
+    repo: &RepositoryKey,
+    status: OaiRecordStatus,
+    last_identifier: Option<&str>,
 ) -> Result<Vec<OaiRecordId>, Error> {
     sqlx::query_as::<_, OaiRecordId>(
         r#"
@@ -141,17 +120,18 @@ pub(crate) async fn fetch(
         LIMIT 100
         "#,
     )
-    .bind(params.endpoint)
-    .bind(params.metadata_prefix)
-    .bind(params.status.as_str())
-    .bind(params.last_identifier)
+    .bind(&repo.endpoint)
+    .bind(&repo.metadata_prefix)
+    .bind(status.as_str())
+    .bind(last_identifier)
     .fetch_all(pool)
     .await
 }
 
 /// Batch retry: reset all failed harvest records to pending.
-pub async fn retry(pool: &PgPool, params: RetryHarvestParams<'_>) -> Result<PgQueryResult, Error> {
-    let HarvestTransition { from, to } = HarvestEvent::HarvestRetryRequested.transition();
+///
+/// Transition: `failed -> pending`.
+pub async fn retry(pool: &PgPool, repo: &RepositoryKey) -> Result<PgQueryResult, Error> {
     sqlx::query(
         r#"
         UPDATE oai_records
@@ -161,44 +141,49 @@ pub async fn retry(pool: &PgPool, params: RetryHarvestParams<'_>) -> Result<PgQu
           AND status = $4
         "#,
     )
-    .bind(params.endpoint)
-    .bind(params.metadata_prefix)
-    .bind(to.as_str())
-    .bind(from.as_str())
+    .bind(&repo.endpoint)
+    .bind(&repo.metadata_prefix)
+    .bind(OaiRecordStatus::Pending.as_str())
+    .bind(OaiRecordStatus::Failed.as_str())
     .execute(pool)
     .await
 }
 
-/// Apply a harvest event (transition state) for a single record.
-/// Uses a static SQL query per event variant (no dynamic SQL construction).
+/// Apply a harvest event for a single record.
 pub async fn transition(
     pool: &PgPool,
-    params: RecordTransitionParams<'_>,
+    key: RecordKey<'_>,
     event: &HarvestEvent<'_>,
 ) -> Result<PgQueryResult, Error> {
-    let HarvestTransition { from, to } = event.transition();
-
     match event {
+        // pending -> available
         HarvestEvent::DownloadSucceeded => {
             sqlx::query(
                 r#"
-                UPDATE oai_records
-                SET status = $4, message = '', last_checked_at = NOW()
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND identifier = $3
-                  AND status = $5
-                "#,
+            UPDATE oai_records
+            SET status = $4, message = '', last_checked_at = NOW()
+            WHERE endpoint = $1
+              AND metadata_prefix = $2
+              AND identifier = $3
+              AND status = $5
+            "#,
             )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(params.identifier)
-            .bind(to.as_str())
-            .bind(from.as_str())
+            .bind(&key.repo.endpoint)
+            .bind(&key.repo.metadata_prefix)
+            .bind(key.identifier)
+            .bind(OaiRecordStatus::Available.as_str())
+            .bind(OaiRecordStatus::Pending.as_str())
             .execute(pool)
             .await
         }
+
+        // pending -> failed (download) or available -> failed (metadata)
         HarvestEvent::DownloadFailed { message } | HarvestEvent::MetadataFailed { message } => {
+            let from = match event {
+                HarvestEvent::DownloadFailed { .. } => OaiRecordStatus::Pending,
+                HarvestEvent::MetadataFailed { .. } => OaiRecordStatus::Available,
+                _ => unreachable!(),
+            };
             sqlx::query(
                 r#"
                 UPDATE oai_records
@@ -209,47 +194,46 @@ pub async fn transition(
                   AND status = $6
                 "#,
             )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(params.identifier)
-            .bind(to.as_str())
+            .bind(&key.repo.endpoint)
+            .bind(&key.repo.metadata_prefix)
+            .bind(key.identifier)
+            .bind(OaiRecordStatus::Failed.as_str())
             .bind(message)
             .bind(from.as_str())
             .execute(pool)
             .await
         }
+
+        // available -> parsed (also resets index lifecycle to pending)
         HarvestEvent::MetadataExtracted { metadata } => {
             sqlx::query(
                 r#"
-                UPDATE oai_records
-                SET status = $4,
-                    metadata = $5,
-                    message = '',
-                    index_status = $6,
-                    index_message = '',
-                    index_attempts = 0,
-                    indexed_at = NULL,
-                    purged_at = NULL,
-                    index_last_checked_at = NULL,
-                    last_checked_at = NOW()
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND identifier = $3
-                  AND status = $7
-                "#,
+            UPDATE oai_records
+            SET status = $4,
+                metadata = $5,
+                message = '',
+                index_status = $6,
+                index_message = '',
+                index_attempts = 0,
+                indexed_at = NULL,
+                purged_at = NULL,
+                index_last_checked_at = NULL,
+                last_checked_at = NOW()
+            WHERE endpoint = $1
+              AND metadata_prefix = $2
+              AND identifier = $3
+              AND status = $7
+            "#,
             )
-            .bind(params.endpoint)
-            .bind(params.metadata_prefix)
-            .bind(params.identifier)
-            .bind(to.as_str())
+            .bind(&key.repo.endpoint)
+            .bind(&key.repo.metadata_prefix)
+            .bind(key.identifier)
+            .bind(OaiRecordStatus::Parsed.as_str())
             .bind(metadata)
             .bind(OaiIndexStatus::Pending.as_str())
-            .bind(from.as_str())
+            .bind(OaiRecordStatus::Available.as_str())
             .execute(pool)
             .await
         }
-        HarvestEvent::HarvestRetryRequested => Err(sqlx::Error::Protocol(
-            "HarvestRetryRequested is a batch operation; use retry()".into(),
-        )),
     }
 }

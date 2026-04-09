@@ -3,7 +3,7 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::{
-    db::harvester::{ImportParams, ImportStats, batch_upsert_records},
+    db::harvester::{ImportStats, batch_upsert_records},
     oai::OaiRecordImport,
 };
 
@@ -24,18 +24,15 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
 
 async fn process(harvester: &Harvester) -> anyhow::Result<ImportStats> {
     let duration = Duration::from_secs(harvester.config.oai_timeout);
-    let client = Client::new(&harvester.config.endpoint)?;
+    let repo = &harvester.config.repo;
+    let client = Client::new(&repo.endpoint)?;
 
     oai_timeout("identify", duration, client.identify()).await??;
 
-    let args = ListIdentifiersArgs::new(&harvester.config.metadata_prefix);
+    let args = ListIdentifiersArgs::new(&repo.metadata_prefix);
     let mut stream =
         oai_timeout("list_identifiers", duration, client.list_identifiers(args)).await??;
 
-    let params = ImportParams {
-        endpoint: &harvester.config.endpoint,
-        metadata_prefix: &harvester.config.metadata_prefix,
-    };
     let mut batch = Vec::with_capacity(BATCH_SIZE);
     let mut total = ImportStats::default();
 
@@ -53,7 +50,7 @@ async fn process(harvester: &Harvester) -> anyhow::Result<ImportStats> {
             for header in payload.header {
                 batch.push(OaiRecordImport::from(header));
                 if batch.len() >= BATCH_SIZE {
-                    let stats = batch_upsert_records(&harvester.pool, params, &batch).await?;
+                    let stats = batch_upsert_records(&harvester.pool, repo, &batch).await?;
                     total.accumulate(&stats);
                     batch.clear();
                 }
@@ -62,7 +59,7 @@ async fn process(harvester: &Harvester) -> anyhow::Result<ImportStats> {
     }
 
     if !batch.is_empty() {
-        let stats = batch_upsert_records(&harvester.pool, params, &batch).await?;
+        let stats = batch_upsert_records(&harvester.pool, repo, &batch).await?;
         total.accumulate(&stats);
     }
 

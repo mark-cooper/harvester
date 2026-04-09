@@ -15,7 +15,7 @@ use harvester::{
 };
 use support::{
     DEFAULT_DATESTAMP, acquire_test_lock, create_temp_dir, create_temp_file, create_traject_shim,
-    fetch_fingerprint, fetch_record_snapshot, insert_record_with_index, setup_test_pool,
+    fetch_fingerprint, fetch_record_snapshot, insert_record_with_index, metadata, setup_test_pool,
     start_mock_solr_server,
 };
 
@@ -52,10 +52,6 @@ impl Drop for EnvVarGuard {
     }
 }
 
-fn metadata() -> serde_json::Value {
-    serde_json::json!({ "repository": [REPOSITORY] })
-}
-
 fn prepend_path(dir: &Path) -> EnvVarGuard {
     let path = env::var("PATH").unwrap_or_default();
     EnvVarGuard::set("PATH", format!("{}:{}", dir.display(), path))
@@ -85,8 +81,7 @@ fn build_runner(
     preview: bool,
 ) -> IndexRunner<ArcLightIndexer> {
     let config = IndexRunnerConfig {
-        endpoint: ENDPOINT.to_string(),
-        metadata_prefix: ARCLIGHT_METADATA_PREFIX.to_string(),
+        repo: harvester::RepositoryKey::new(ENDPOINT, ARCLIGHT_METADATA_PREFIX),
         oai_repository: REPOSITORY.to_string(),
         run_options,
         preview,
@@ -109,7 +104,7 @@ async fn index_success_marks_record_indexed() -> anyhow::Result<()> {
         "pending",
         "",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
 
@@ -161,7 +156,7 @@ async fn index_failure_marks_record_index_failed() -> anyhow::Result<()> {
         "pending",
         "",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
 
@@ -215,7 +210,7 @@ async fn index_batch_mixed_results_continue_processing_remaining_records() -> an
         "pending",
         "",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
     insert_record_with_index(
@@ -227,7 +222,7 @@ async fn index_batch_mixed_results_continue_processing_remaining_records() -> an
         "pending",
         "",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
 
@@ -290,7 +285,7 @@ async fn delete_success_marks_record_purged() -> anyhow::Result<()> {
         "pending",
         "",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
 
@@ -337,7 +332,7 @@ async fn delete_failure_marks_record_purge_failed() -> anyhow::Result<()> {
         "pending",
         "",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
 
@@ -386,7 +381,7 @@ async fn delete_batch_failures_continue_processing_remaining_records() -> anyhow
         "pending",
         "",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
     insert_record_with_index(
@@ -398,7 +393,7 @@ async fn delete_batch_failures_continue_processing_remaining_records() -> anyhow
         "pending",
         "",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
 
@@ -454,7 +449,7 @@ async fn preview_mode_has_no_side_effects() -> anyhow::Result<()> {
         "pending",
         "queued",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
     insert_record_with_index(
@@ -466,7 +461,7 @@ async fn preview_mode_has_no_side_effects() -> anyhow::Result<()> {
         "pending",
         "queued",
         0,
-        metadata(),
+        metadata(REPOSITORY),
     )
     .await?;
 

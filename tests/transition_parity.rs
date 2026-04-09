@@ -5,16 +5,12 @@ use harvester::{
     oai::{HarvestEvent, IndexEvent},
 };
 use support::{
-    DEFAULT_DATESTAMP, METADATA_PREFIX, acquire_test_lock, fetch_record_snapshot, insert_record,
-    insert_record_with_index, setup_test_pool,
+    DEFAULT_DATESTAMP, acquire_test_lock, fetch_record_snapshot, insert_record,
+    insert_record_with_index, metadata, repo_key, setup_test_pool,
 };
 
 const ENDPOINT: &str = "https://parity.example.org/oai";
 const REPOSITORY: &str = "Parity Repository";
-
-fn metadata(repository: &str) -> serde_json::Value {
-    serde_json::json!({ "repository": [repository] })
-}
 
 // ---------------------------------------------------------------------------
 // Legal harvest transitions via Rust event functions
@@ -29,11 +25,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
     insert_record(&pool, ENDPOINT, "dl-ok", DEFAULT_DATESTAMP, "pending").await?;
     harvest_db::transition(
         &pool,
-        harvest_db::RecordTransitionParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "dl-ok",
-        },
+        repo_key(ENDPOINT).record("dl-ok"),
         &HarvestEvent::DownloadSucceeded,
     )
     .await?;
@@ -44,11 +36,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
     insert_record(&pool, ENDPOINT, "dl-fail", DEFAULT_DATESTAMP, "pending").await?;
     harvest_db::transition(
         &pool,
-        harvest_db::RecordTransitionParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "dl-fail",
-        },
+        repo_key(ENDPOINT).record("dl-fail"),
         &HarvestEvent::DownloadFailed { message: "timeout" },
     )
     .await?;
@@ -60,11 +48,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
     insert_record(&pool, ENDPOINT, "meta-ok", DEFAULT_DATESTAMP, "available").await?;
     harvest_db::transition(
         &pool,
-        harvest_db::RecordTransitionParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "meta-ok",
-        },
+        repo_key(ENDPOINT).record("meta-ok"),
         &HarvestEvent::MetadataExtracted {
             metadata: metadata(REPOSITORY),
         },
@@ -77,11 +61,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
     insert_record(&pool, ENDPOINT, "meta-fail", DEFAULT_DATESTAMP, "available").await?;
     harvest_db::transition(
         &pool,
-        harvest_db::RecordTransitionParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "meta-fail",
-        },
+        repo_key(ENDPOINT).record("meta-fail"),
         &HarvestEvent::MetadataFailed { message: "bad xml" },
     )
     .await?;
@@ -91,14 +71,7 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
 
     // HarvestRetry: failed -> pending (batch)
     insert_record(&pool, ENDPOINT, "retry-me", DEFAULT_DATESTAMP, "failed").await?;
-    harvest_db::retry(
-        &pool,
-        harvest_db::RetryHarvestParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-        },
-    )
-    .await?;
+    harvest_db::retry(&pool, &repo_key(ENDPOINT)).await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "retry-me").await?;
     assert_eq!(snap.status, "pending");
 
@@ -129,11 +102,7 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
     .await?;
     index_db::transition(
         &pool,
-        index_db::UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "idx-ok",
-        },
+        repo_key(ENDPOINT).record("idx-ok"),
         &IndexEvent::IndexSucceeded,
     )
     .await?;
@@ -155,11 +124,7 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
     .await?;
     index_db::transition(
         &pool,
-        index_db::UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "idx-fail",
-        },
+        repo_key(ENDPOINT).record("idx-fail"),
         &IndexEvent::IndexFailed {
             message: "traject error",
         },
@@ -171,11 +136,7 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
     // IndexSucceeded from index_failed: index_failed -> indexed
     index_db::transition(
         &pool,
-        index_db::UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "idx-fail",
-        },
+        repo_key(ENDPOINT).record("idx-fail"),
         &IndexEvent::IndexSucceeded,
     )
     .await?;
@@ -197,11 +158,7 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
     .await?;
     index_db::transition(
         &pool,
-        index_db::UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "purge-ok",
-        },
+        repo_key(ENDPOINT).record("purge-ok"),
         &IndexEvent::PurgeSucceeded,
     )
     .await?;
@@ -223,11 +180,7 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
     .await?;
     index_db::transition(
         &pool,
-        index_db::UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "purge-fail",
-        },
+        repo_key(ENDPOINT).record("purge-fail"),
         &IndexEvent::PurgeFailed {
             message: "solr down",
         },
@@ -239,11 +192,7 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
     // PurgeSucceeded from purge_failed: purge_failed -> purged
     index_db::transition(
         &pool,
-        index_db::UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "purge-fail",
-        },
+        repo_key(ENDPOINT).record("purge-fail"),
         &IndexEvent::PurgeSucceeded,
     )
     .await?;
@@ -307,15 +256,7 @@ async fn wildcard_resets_are_allowed_by_triggers() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
-    index_db::reindex(
-        &pool,
-        index_db::ReindexStateParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            oai_repository: REPOSITORY,
-        },
-    )
-    .await?;
+    index_db::reindex(&pool, &repo_key(ENDPOINT), REPOSITORY).await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "indexed-to-pending").await?;
     assert_eq!(snap.index_status, "pending");
 

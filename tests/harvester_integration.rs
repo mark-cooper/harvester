@@ -2,11 +2,7 @@ mod support;
 
 use std::{collections::HashMap, fs};
 
-use harvester::{
-    OaiRecordId,
-    db::harvester::{RetryHarvestParams, retry},
-    oai::OaiRecordStatus,
-};
+use harvester::{OaiRecordId, RepositoryKey, db::harvester::retry, oai::OaiRecordStatus};
 use support::{
     DEFAULT_DATESTAMP, EAD_XML, GetRecordSpec, MockOaiConfig, acquire_test_lock,
     count_records_for_identifier, create_rules_file, create_temp_dir, create_temp_file,
@@ -170,10 +166,7 @@ async fn retry_resets_failed_records_and_harvest_reprocesses_them() -> anyhow::R
 
     let result = retry(
         &pool,
-        RetryHarvestParams {
-            endpoint: &server.endpoint,
-            metadata_prefix: support::METADATA_PREFIX,
-        },
+        &RepositoryKey::new(&server.endpoint, support::METADATA_PREFIX),
     )
     .await?;
     assert_eq!(result.rows_affected(), 1);

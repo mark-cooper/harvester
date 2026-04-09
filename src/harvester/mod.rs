@@ -13,7 +13,7 @@ use tracing::info;
 
 use crate::OaiRecordId;
 use crate::batch;
-use crate::db::harvester::{FetchRecordsParams, RecordTransitionParams, fetch, transition};
+use crate::db::harvester::{fetch, transition};
 use crate::oai::{HarvestEvent, OaiConfig, OaiRecordStatus};
 
 const CONCURRENT_DOWNLOADS: usize = 10;
@@ -68,13 +68,9 @@ impl Harvester {
         let all = batch::run(
             || self.is_shutdown(),
             async |last_identifier| {
-                let params = FetchRecordsParams {
-                    endpoint: &self.config.endpoint,
-                    metadata_prefix: &self.config.metadata_prefix,
-                    status,
-                    last_identifier,
-                };
-                fetch(&self.pool, params).await.map_err(Into::into)
+                fetch(&self.pool, &self.config.repo, status, last_identifier)
+                    .await
+                    .map_err(Into::into)
             },
             &process,
         )
@@ -91,13 +87,9 @@ impl Harvester {
         record: &OaiRecordId,
         event: &HarvestEvent<'a>,
     ) -> anyhow::Result<bool> {
-        let params = RecordTransitionParams {
-            endpoint: self.config.endpoint.as_str(),
-            metadata_prefix: self.config.metadata_prefix.as_str(),
-            identifier: &record.identifier,
-        };
+        let key = self.config.repo.record(&record.identifier);
 
-        match transition(&self.pool, params, event).await {
+        match transition(&self.pool, key, event).await {
             Ok(result) => {
                 if result.rows_affected() == 0 {
                     Ok(false)

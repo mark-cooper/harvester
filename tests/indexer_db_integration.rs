@@ -2,23 +2,16 @@ mod support;
 
 use harvester::{
     IndexSelectionMode, OaiRecordId,
-    db::indexer::{
-        FetchIndexCandidatesParams, ReindexStateParams, UpdateIndexStatusParams, fetch, reindex,
-        transition,
-    },
+    db::indexer::{FetchIndexCandidatesParams, fetch, reindex, transition},
     oai::{IndexEvent, OaiRecordStatus},
 };
 use support::{
-    DEFAULT_DATESTAMP, METADATA_PREFIX, acquire_test_lock, fetch_record_snapshot,
-    insert_record_with_index, setup_test_pool,
+    DEFAULT_DATESTAMP, acquire_test_lock, fetch_record_snapshot, insert_record_with_index,
+    metadata, repo_key, setup_test_pool,
 };
 
 const ENDPOINT: &str = "https://example.org/oai";
 const REPOSITORY: &str = "Integration Repository";
-
-fn metadata(repository: &str) -> serde_json::Value {
-    serde_json::json!({ "repository": [repository] })
-}
 
 fn records_with_status(records: Vec<OaiRecordId>) -> Vec<(String, OaiRecordStatus)> {
     records
@@ -81,9 +74,9 @@ async fn pending_candidate_queries_only_select_pending_records() -> anyhow::Resu
     )
     .await?;
 
+    let r = repo_key(ENDPOINT);
     let params = FetchIndexCandidatesParams {
-        endpoint: ENDPOINT,
-        metadata_prefix: METADATA_PREFIX,
+        repo: &r,
         oai_repository: REPOSITORY,
         selection_mode: IndexSelectionMode::PendingOnly,
         max_attempts: None,
@@ -157,9 +150,9 @@ async fn failed_candidate_queries_apply_attempt_and_message_filters() -> anyhow:
     )
     .await?;
 
+    let r = repo_key(ENDPOINT);
     let params = FetchIndexCandidatesParams {
-        endpoint: ENDPOINT,
-        metadata_prefix: METADATA_PREFIX,
+        repo: &r,
         oai_repository: REPOSITORY,
         selection_mode: IndexSelectionMode::FailedOnly,
         max_attempts: Some(5),
@@ -213,11 +206,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
 
     transition(
         &pool,
-        UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "index-transition",
-        },
+        repo_key(ENDPOINT).record("index-transition"),
         &IndexEvent::IndexFailed {
             message: "traject failed",
         },
@@ -231,11 +220,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
 
     transition(
         &pool,
-        UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "index-transition",
-        },
+        repo_key(ENDPOINT).record("index-transition"),
         &IndexEvent::IndexSucceeded,
     )
     .await?;
@@ -247,11 +232,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
 
     transition(
         &pool,
-        UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "purge-transition",
-        },
+        repo_key(ENDPOINT).record("purge-transition"),
         &IndexEvent::PurgeFailed {
             message: "solr failed",
         },
@@ -264,11 +245,7 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
 
     transition(
         &pool,
-        UpdateIndexStatusParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            identifier: "purge-transition",
-        },
+        repo_key(ENDPOINT).record("purge-transition"),
         &IndexEvent::PurgeSucceeded,
     )
     .await?;
@@ -323,15 +300,7 @@ async fn reindex_requeues_only_matching_repository_records() -> anyhow::Result<(
     )
     .await?;
 
-    let result = reindex(
-        &pool,
-        ReindexStateParams {
-            endpoint: ENDPOINT,
-            metadata_prefix: METADATA_PREFIX,
-            oai_repository: REPOSITORY,
-        },
-    )
-    .await?;
+    let result = reindex(&pool, &repo_key(ENDPOINT), REPOSITORY).await?;
     assert_eq!(result.rows_affected(), 2);
 
     let parsed = fetch_record_snapshot(&pool, ENDPOINT, "parsed-indexed").await?;

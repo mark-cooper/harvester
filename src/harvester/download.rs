@@ -13,7 +13,7 @@ use crate::oai::{HarvestEvent, OaiRecordId, OaiRecordStatus};
 use super::Harvester;
 
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
-    let client = Client::new(&harvester.config.endpoint)?;
+    let client = Client::new(&harvester.config.repo.endpoint)?;
     harvester
         .batched(OaiRecordStatus::Pending, "Downloaded", async |batch| {
             process_batch(&client, harvester, batch).await
@@ -46,7 +46,8 @@ async fn process_record(
     let result = {
         let mut attempts = 0u32;
         loop {
-            let args = GetRecordArgs::new(&record.identifier, &harvester.config.metadata_prefix);
+            let args =
+                GetRecordArgs::new(&record.identifier, &harvester.config.repo.metadata_prefix);
             match timeout(duration, client.get_record(args)).await {
                 Ok(result) => break result,
                 Err(_) if attempts < max_retries => {

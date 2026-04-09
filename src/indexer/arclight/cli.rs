@@ -12,8 +12,9 @@ use super::{
     config::{ARCLIGHT_METADATA_PREFIX, build_config},
 };
 use crate::{
-    db::{self, indexer::ReindexStateParams},
+    db,
     indexer::{IndexRunOptions, IndexRunner, IndexRunnerConfig},
+    oai::RepositoryKey,
 };
 
 #[derive(Debug, Args)]
@@ -80,13 +81,10 @@ pub async fn index(
 ) -> anyhow::Result<()> {
     info!("Indexing records into {}", cfg.repository);
 
+    let repo = RepositoryKey::new(cfg.oai_endpoint.clone(), ARCLIGHT_METADATA_PREFIX);
+
     if cfg.reindex {
-        let params = ReindexStateParams {
-            endpoint: &cfg.oai_endpoint,
-            metadata_prefix: ARCLIGHT_METADATA_PREFIX,
-            oai_repository: &cfg.oai_repository,
-        };
-        let result = db::indexer::reindex(&pool, params).await?;
+        let result = db::indexer::reindex(&pool, &repo, &cfg.oai_repository).await?;
         info!(
             "Requeued {} record(s) to pending index status",
             result.rows_affected()
@@ -99,7 +97,6 @@ pub async fn index(
         IndexRunOptions::pending_only()
     };
 
-    let oai_endpoint = cfg.oai_endpoint.clone();
     let oai_repository = cfg.oai_repository.clone();
     let preview = cfg.preview;
 
@@ -107,8 +104,7 @@ pub async fn index(
     let indexer = ArcLightIndexer::new(config);
 
     let runner_config = IndexRunnerConfig {
-        endpoint: oai_endpoint,
-        metadata_prefix: ARCLIGHT_METADATA_PREFIX.to_string(),
+        repo,
         oai_repository,
         run_options,
         preview,
