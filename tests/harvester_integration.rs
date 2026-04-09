@@ -2,7 +2,7 @@ mod support;
 
 use std::{collections::HashMap, fs};
 
-use harvester::{OaiRecordId, RepositoryKey, db::harvester::retry, oai::OaiRecordStatus};
+use harvester::{OaiRecord, OaiScope, db::harvester::retry, oai::OaiRecordStatus};
 use support::{
     DEFAULT_DATESTAMP, EAD_XML, GetRecordSpec, MockOaiConfig, acquire_test_lock,
     count_records_for_identifier, create_rules_file, create_temp_dir, create_temp_file,
@@ -36,7 +36,7 @@ async fn run_without_rules_leaves_records_available() -> anyhow::Result<()> {
     assert_eq!(snapshot.metadata, serde_json::json!({}));
 
     let fingerprint = fetch_fingerprint(&pool, &server.endpoint, identifier).await?;
-    let record = OaiRecordId {
+    let record = OaiRecord {
         identifier: identifier.to_string(),
         fingerprint,
         status: OaiRecordStatus::Available,
@@ -166,7 +166,7 @@ async fn retry_resets_failed_records_and_harvest_reprocesses_them() -> anyhow::R
 
     let result = retry(
         &pool,
-        &RepositoryKey::new(&server.endpoint, support::METADATA_PREFIX),
+        &OaiScope::new(&server.endpoint, support::METADATA_PREFIX),
     )
     .await?;
     assert_eq!(result.rows_affected(), 1);
@@ -310,7 +310,7 @@ async fn metadata_missing_file_marks_failed_and_continues() -> anyhow::Result<()
 
     let present_fingerprint =
         fetch_fingerprint(&pool, &server.endpoint, present_identifier).await?;
-    let present_record = OaiRecordId {
+    let present_record = OaiRecord {
         identifier: present_identifier.to_string(),
         fingerprint: present_fingerprint,
         status: OaiRecordStatus::Available,
@@ -360,7 +360,7 @@ async fn metadata_invalid_xml_marks_failed() -> anyhow::Result<()> {
     .await?;
 
     let fingerprint = fetch_fingerprint(&pool, &server.endpoint, identifier).await?;
-    let record = OaiRecordId {
+    let record = OaiRecord {
         identifier: identifier.to_string(),
         fingerprint,
         status: OaiRecordStatus::Available,

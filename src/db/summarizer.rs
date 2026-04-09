@@ -2,15 +2,15 @@
 
 use sqlx::{Error, PgPool};
 
-use crate::oai::{OaiRecordId, OaiRecordStatus};
+use crate::oai::{OaiRecord, OaiRecordStatus};
 
 pub(crate) async fn fetch_record_for_summary(
     pool: &PgPool,
     endpoint: &str,
     metadata_prefix: &str,
     identifier: &str,
-) -> Result<Option<OaiRecordId>, Error> {
-    sqlx::query_as::<_, OaiRecordId>(
+) -> Result<Option<OaiRecord>, Error> {
+    sqlx::query_as::<_, OaiRecord>(
         r#"
         SELECT identifier, fingerprint, status
         FROM oai_records

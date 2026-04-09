@@ -3,12 +3,12 @@ use sqlx::{Error, PgPool};
 
 use crate::{
     IndexSelectionMode,
-    oai::{IndexEvent, OaiIndexStatus, OaiRecordId, OaiRecordStatus, RecordKey, RepositoryKey},
+    oai::{IndexEvent, OaiIndexStatus, OaiRecord, OaiRecordStatus, OaiScope},
 };
 
 pub struct FetchIndexCandidatesParams<'a> {
-    pub repo: &'a RepositoryKey,
-    pub oai_repository: &'a str,
+    pub scope: &'a OaiScope,
+    pub source_repository: &'a str,
     pub selection_mode: IndexSelectionMode,
     pub max_attempts: Option<i32>,
     pub message_filter: Option<&'a str>,
@@ -18,7 +18,7 @@ pub struct FetchIndexCandidatesParams<'a> {
 pub async fn fetch(
     pool: &PgPool,
     params: FetchIndexCandidatesParams<'_>,
-) -> Result<Vec<OaiRecordId>, Error> {
+) -> Result<Vec<OaiRecord>, Error> {
     let (parsed_index_status, deleted_index_status) = match params.selection_mode {
         IndexSelectionMode::PendingOnly => (OaiIndexStatus::Pending, OaiIndexStatus::Pending),
         IndexSelectionMode::FailedOnly => {
@@ -26,7 +26,7 @@ pub async fn fetch(
         }
     };
 
-    sqlx::query_as::<_, OaiRecordId>(
+    sqlx::query_as::<_, OaiRecord>(
         r#"
         SELECT identifier, fingerprint, status
         FROM oai_records
@@ -44,13 +44,13 @@ pub async fn fetch(
         LIMIT 100
         "#,
     )
-    .bind(&params.repo.endpoint)
-    .bind(&params.repo.metadata_prefix)
+    .bind(&params.scope.endpoint)
+    .bind(&params.scope.metadata_prefix)
     .bind(OaiRecordStatus::Parsed.as_str())
     .bind(parsed_index_status.as_str())
     .bind(OaiRecordStatus::Deleted.as_str())
     .bind(deleted_index_status.as_str())
-    .bind(params.oai_repository)
+    .bind(params.source_repository)
     .bind(params.last_identifier)
     .bind(params.max_attempts)
     .bind(params.message_filter)
@@ -59,11 +59,11 @@ pub async fn fetch(
 }
 
 /// Batch reindex: reset index_status to pending for all parsed/deleted records
-/// in the given repository. Wildcard transition: any index_status -> pending.
+/// in the given source repository. Wildcard transition: any index_status -> pending.
 pub async fn reindex(
     pool: &PgPool,
-    repo: &RepositoryKey,
-    oai_repository: &str,
+    scope: &OaiScope,
+    source_repository: &str,
 ) -> Result<PgQueryResult, Error> {
     let eligible = [
         OaiRecordStatus::Parsed.as_str(),
@@ -85,11 +85,11 @@ pub async fn reindex(
           AND metadata->'repository' ? $5
         "#,
     )
-    .bind(&repo.endpoint)
-    .bind(&repo.metadata_prefix)
+    .bind(&scope.endpoint)
+    .bind(&scope.metadata_prefix)
     .bind(OaiIndexStatus::Pending.as_str())
     .bind(&eligible[..])
-    .bind(oai_repository)
+    .bind(source_repository)
     .execute(pool)
     .await
 }
@@ -99,7 +99,8 @@ pub async fn reindex(
 /// statuses, and target index status directly.
 pub async fn transition(
     pool: &PgPool,
-    key: RecordKey<'_>,
+    scope: &OaiScope,
+    identifier: &str,
     event: &IndexEvent<'_>,
 ) -> Result<PgQueryResult, Error> {
     // Index transitions: pending|index_failed -> indexed|index_failed (for parsed records),
@@ -134,9 +135,9 @@ pub async fn transition(
               AND (index_status = $6 OR index_status = $7)
             "#,
             )
-            .bind(&key.repo.endpoint)
-            .bind(&key.repo.metadata_prefix)
-            .bind(key.identifier)
+            .bind(&scope.endpoint)
+            .bind(&scope.metadata_prefix)
+            .bind(identifier)
             .bind(OaiIndexStatus::Indexed.as_str())
             .bind(required_status.as_str())
             .bind(from_a.as_str())
@@ -165,9 +166,9 @@ pub async fn transition(
                   AND (index_status = $7 OR index_status = $8)
                 "#,
             )
-            .bind(&key.repo.endpoint)
-            .bind(&key.repo.metadata_prefix)
-            .bind(key.identifier)
+            .bind(&scope.endpoint)
+            .bind(&scope.metadata_prefix)
+            .bind(identifier)
             .bind(to.as_str())
             .bind(message)
             .bind(required_status.as_str())
@@ -193,9 +194,9 @@ pub async fn transition(
               AND (index_status = $6 OR index_status = $7)
             "#,
             )
-            .bind(&key.repo.endpoint)
-            .bind(&key.repo.metadata_prefix)
-            .bind(key.identifier)
+            .bind(&scope.endpoint)
+            .bind(&scope.metadata_prefix)
+            .bind(identifier)
             .bind(OaiIndexStatus::Purged.as_str())
             .bind(required_status.as_str())
             .bind(from_a.as_str())

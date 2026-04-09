@@ -14,7 +14,7 @@ pub use indexer::arclight::config::{
     ARCLIGHT_METADATA_PREFIX, ArcLightIndexerConfig, build_config as build_arclight_config,
 };
 pub use indexer::{IndexRunOptions, IndexRunner, IndexRunnerConfig, IndexSelectionMode};
-pub use oai::{OaiConfig, OaiRecordId, RecordKey, RepositoryKey};
+pub use oai::{OaiConfig, OaiRecord, OaiScope};
 
 pub fn expand_path(path: &Path) -> PathBuf {
     PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref())

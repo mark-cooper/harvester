@@ -8,12 +8,12 @@ use tokio::time::timeout;
 use tracing::warn;
 
 use crate::harvester::{BatchStats, CONCURRENT_DOWNLOADS};
-use crate::oai::{HarvestEvent, OaiRecordId, OaiRecordStatus};
+use crate::oai::{HarvestEvent, OaiRecord, OaiRecordStatus};
 
 use super::Harvester;
 
 pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
-    let client = Client::new(&harvester.config.repo.endpoint)?;
+    let client = Client::new(&harvester.config.scope.endpoint)?;
     harvester
         .batched(OaiRecordStatus::Pending, "Downloaded", async |batch| {
             process_batch(&client, harvester, batch).await
@@ -24,7 +24,7 @@ pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
 async fn process_batch(
     client: &Client,
     harvester: &Harvester,
-    records: &[OaiRecordId],
+    records: &[OaiRecord],
 ) -> BatchStats {
     let results: Vec<_> = stream::iter(records)
         .map(|record| process_record(client, harvester, record))
@@ -38,7 +38,7 @@ async fn process_batch(
 async fn process_record(
     client: &Client,
     harvester: &Harvester,
-    record: &OaiRecordId,
+    record: &OaiRecord,
 ) -> anyhow::Result<bool> {
     let duration = Duration::from_secs(harvester.config.oai_timeout);
     let max_retries = harvester.config.oai_retries;
@@ -47,7 +47,7 @@ async fn process_record(
         let mut attempts = 0u32;
         loop {
             let args =
-                GetRecordArgs::new(&record.identifier, &harvester.config.repo.metadata_prefix);
+                GetRecordArgs::new(&record.identifier, &harvester.config.scope.metadata_prefix);
             match timeout(duration, client.get_record(args)).await {
                 Ok(result) => break result,
                 Err(_) if attempts < max_retries => {

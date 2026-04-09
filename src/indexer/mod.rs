@@ -8,21 +8,21 @@ use sqlx::PgPool;
 use tracing::{error, info};
 
 use crate::{
-    OaiRecordId, batch,
+    OaiRecord, batch,
     db::indexer::{FetchIndexCandidatesParams, fetch, transition},
-    oai::{IndexEvent, RecordAction, RepositoryKey},
+    oai::{IndexEvent, OaiScope, RecordAction},
 };
 
 const CONCURRENCY: usize = 10;
 
 pub trait Indexer: Sync {
-    fn index_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
-    fn delete_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn index_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn delete_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
 pub struct IndexRunnerConfig {
-    pub repo: RepositoryKey,
-    pub oai_repository: String,
+    pub scope: OaiScope,
+    pub source_repository: String,
     pub run_options: IndexRunOptions,
     pub preview: bool,
 }
@@ -71,7 +71,7 @@ impl<T: Indexer> IndexRunner<T> {
         let all = batch::run(
             || self.is_shutdown(),
             async |last_identifier| self.fetch_batch(last_identifier).await,
-            async |batch: &[OaiRecordId]| self.process_batch(batch).await,
+            async |batch: &[OaiRecord]| self.process_batch(batch).await,
         )
         .await?;
 
@@ -82,10 +82,10 @@ impl<T: Indexer> IndexRunner<T> {
         })
     }
 
-    async fn fetch_batch(&self, last_identifier: Option<&str>) -> anyhow::Result<Vec<OaiRecordId>> {
+    async fn fetch_batch(&self, last_identifier: Option<&str>) -> anyhow::Result<Vec<OaiRecord>> {
         let params = FetchIndexCandidatesParams {
-            repo: &self.config.repo,
-            oai_repository: &self.config.oai_repository,
+            scope: &self.config.scope,
+            source_repository: &self.config.source_repository,
             selection_mode: self.config.run_options.selection_mode,
             max_attempts: self.config.run_options.max_attempts,
             message_filter: self.config.run_options.message_filter.as_deref(),
@@ -95,7 +95,7 @@ impl<T: Indexer> IndexRunner<T> {
         Ok(fetch(&self.pool, params).await?)
     }
 
-    async fn process_batch(&self, batch: &[OaiRecordId]) -> ProcessStats {
+    async fn process_batch(&self, batch: &[OaiRecord]) -> ProcessStats {
         let mut stats = ProcessStats::default();
 
         if self.config.preview {
@@ -151,10 +151,8 @@ impl<T: Indexer> IndexRunner<T> {
         stats
     }
 
-    async fn update(&self, record: &OaiRecordId, event: &IndexEvent<'_>) -> anyhow::Result<bool> {
-        let key = self.config.repo.record(&record.identifier);
-
-        match transition(&self.pool, key, event).await {
+    async fn update(&self, record: &OaiRecord, event: &IndexEvent<'_>) -> anyhow::Result<bool> {
+        match transition(&self.pool, &self.config.scope, &record.identifier, event).await {
             Ok(result) => Ok(result.rows_affected() > 0),
             Err(_) => Ok(false),
         }

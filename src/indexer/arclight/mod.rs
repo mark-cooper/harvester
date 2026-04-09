@@ -13,7 +13,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::{OaiRecordId, indexer::Indexer};
+use crate::{OaiRecord, indexer::Indexer};
 
 use config::ArcLightIndexerConfig;
 
@@ -30,7 +30,7 @@ impl ArcLightIndexer {
         }
     }
 
-    async fn run_traject(&self, record: &OaiRecordId) -> anyhow::Result<Output> {
+    async fn run_traject(&self, record: &OaiRecord) -> anyhow::Result<Output> {
         let path = self.config.dir.join(record.path());
 
         let mut child = Command::new("traject")
@@ -169,7 +169,7 @@ impl ArcLightIndexer {
 }
 
 impl Indexer for ArcLightIndexer {
-    fn index_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn index_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             // Delete existing root + nested children first to avoid orphaned
             // child documents when Solr re-indexes a nested document block.
@@ -186,7 +186,7 @@ impl Indexer for ArcLightIndexer {
         })
     }
 
-    fn delete_record<'a>(&'a self, record: &'a OaiRecordId) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn delete_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move { self.solr_delete_by_root(&record.fingerprint, false).await })
     }
 }

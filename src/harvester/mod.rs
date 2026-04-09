@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use sqlx::PgPool;
 use tracing::info;
 
-use crate::OaiRecordId;
+use crate::OaiRecord;
 use crate::batch;
 use crate::db::harvester::{fetch, transition};
 use crate::oai::{HarvestEvent, OaiConfig, OaiRecordStatus};
@@ -63,12 +63,12 @@ impl Harvester {
         &self,
         status: OaiRecordStatus,
         label: &str,
-        process: impl AsyncFn(&[OaiRecordId]) -> BatchStats,
+        process: impl AsyncFn(&[OaiRecord]) -> BatchStats,
     ) -> anyhow::Result<()> {
         let all = batch::run(
             || self.is_shutdown(),
             async |last_identifier| {
-                fetch(&self.pool, &self.config.repo, status, last_identifier)
+                fetch(&self.pool, &self.config.scope, status, last_identifier)
                     .await
                     .map_err(Into::into)
             },
@@ -84,12 +84,10 @@ impl Harvester {
 
     async fn update<'a>(
         &self,
-        record: &OaiRecordId,
+        record: &OaiRecord,
         event: &HarvestEvent<'a>,
     ) -> anyhow::Result<bool> {
-        let key = self.config.repo.record(&record.identifier);
-
-        match transition(&self.pool, key, event).await {
+        match transition(&self.pool, &self.config.scope, &record.identifier, event).await {
             Ok(result) => {
                 if result.rows_affected() == 0 {
                     Ok(false)

@@ -24,7 +24,7 @@ pub struct ArcLightIndexerConfig {
 pub fn build_config(cfg: ArcLightArgs) -> anyhow::Result<ArcLightIndexerConfig> {
     ensure_traject_available()?;
     let (configuration, data_dir) = resolve_paths(&cfg)?;
-    let repository_file = generate_repository_file(&cfg.repository, &cfg.oai_repository)?;
+    let repository_file = generate_repository_file(&cfg.repository, &cfg.source_repository)?;
 
     Ok(ArcLightIndexerConfig {
         configuration,

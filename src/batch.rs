@@ -1,8 +1,8 @@
-use crate::OaiRecordId;
+use crate::OaiRecord;
 
 const BATCH_SIZE: usize = 100;
 
-/// Generic batch processing loop over `OaiRecordId` records.
+/// Generic batch processing loop over `OaiRecord` rows.
 ///
 /// Handles pagination (via `last_identifier`), shutdown checking, and
 /// batch-size termination. The caller provides:
@@ -11,8 +11,8 @@ const BATCH_SIZE: usize = 100;
 /// - `process`: called with each non-empty batch
 pub async fn run<S>(
     is_shutdown: impl Fn() -> bool,
-    fetch: impl AsyncFn(Option<&str>) -> anyhow::Result<Vec<OaiRecordId>>,
-    process: impl AsyncFn(&[OaiRecordId]) -> S,
+    fetch: impl AsyncFn(Option<&str>) -> anyhow::Result<Vec<OaiRecord>>,
+    process: impl AsyncFn(&[OaiRecord]) -> S,
 ) -> anyhow::Result<Vec<S>> {
     let mut last_identifier: Option<String> = None;
     let mut results = Vec::new();

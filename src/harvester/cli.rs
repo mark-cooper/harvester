@@ -8,7 +8,7 @@ use sqlx::{Pool, Postgres};
 use tracing::info;
 
 use super::{Harvester, perform};
-use crate::{OaiConfig, db, expand_path, oai::RepositoryKey};
+use crate::{OaiConfig, db, expand_path, oai::OaiScope};
 
 #[derive(Debug, Args)]
 pub struct HarvesterArgs {
@@ -47,10 +47,10 @@ pub async fn harvest(
 ) -> anyhow::Result<()> {
     info!("Harvesting records from {}", cfg.endpoint);
 
-    let repo = RepositoryKey::new(cfg.endpoint, cfg.metadata_prefix);
+    let scope = OaiScope::new(cfg.endpoint, cfg.metadata_prefix);
 
     if cfg.retry {
-        let result = db::harvester::retry(&pool, &repo).await?;
+        let result = db::harvester::retry(&pool, &scope).await?;
         info!(
             "Reset {} failed record(s) to pending",
             result.rows_affected()
@@ -61,7 +61,7 @@ pub async fn harvest(
 
     let config = OaiConfig {
         data_dir,
-        repo,
+        scope,
         oai_timeout: cfg.oai_timeout,
         oai_retries: cfg.oai_retries,
     };

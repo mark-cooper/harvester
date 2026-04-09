@@ -1,10 +1,7 @@
 use sqlx::postgres::PgQueryResult;
 use sqlx::{Error, PgPool};
 
-use crate::oai::{
-    HarvestEvent, OaiIndexStatus, OaiRecordId, OaiRecordImport, OaiRecordStatus, RecordKey,
-    RepositoryKey,
-};
+use crate::oai::{HarvestEvent, OaiHeader, OaiIndexStatus, OaiRecord, OaiRecordStatus, OaiScope};
 
 #[derive(Default)]
 pub(crate) struct ImportStats {
@@ -23,8 +20,8 @@ impl ImportStats {
 
 pub(crate) async fn batch_upsert_records(
     pool: &PgPool,
-    repo: &RepositoryKey,
-    records: &[OaiRecordImport],
+    scope: &OaiScope,
+    records: &[OaiHeader],
 ) -> anyhow::Result<ImportStats> {
     if records.is_empty() {
         return Ok(ImportStats::default());
@@ -76,8 +73,8 @@ pub(crate) async fn batch_upsert_records(
         RETURNING status
         "#,
     )
-    .bind(&repo.endpoint)
-    .bind(&repo.metadata_prefix)
+    .bind(&scope.endpoint)
+    .bind(&scope.metadata_prefix)
     .bind(&identifiers)
     .bind(&datestamps)
     .bind(&statuses)
@@ -104,11 +101,11 @@ pub(crate) async fn batch_upsert_records(
 
 pub(crate) async fn fetch(
     pool: &PgPool,
-    repo: &RepositoryKey,
+    scope: &OaiScope,
     status: OaiRecordStatus,
     last_identifier: Option<&str>,
-) -> Result<Vec<OaiRecordId>, Error> {
-    sqlx::query_as::<_, OaiRecordId>(
+) -> Result<Vec<OaiRecord>, Error> {
+    sqlx::query_as::<_, OaiRecord>(
         r#"
         SELECT identifier, fingerprint, status
         FROM oai_records
@@ -120,8 +117,8 @@ pub(crate) async fn fetch(
         LIMIT 100
         "#,
     )
-    .bind(&repo.endpoint)
-    .bind(&repo.metadata_prefix)
+    .bind(&scope.endpoint)
+    .bind(&scope.metadata_prefix)
     .bind(status.as_str())
     .bind(last_identifier)
     .fetch_all(pool)
@@ -131,7 +128,7 @@ pub(crate) async fn fetch(
 /// Batch retry: reset all failed harvest records to pending.
 ///
 /// Transition: `failed -> pending`.
-pub async fn retry(pool: &PgPool, repo: &RepositoryKey) -> Result<PgQueryResult, Error> {
+pub async fn retry(pool: &PgPool, scope: &OaiScope) -> Result<PgQueryResult, Error> {
     sqlx::query(
         r#"
         UPDATE oai_records
@@ -141,8 +138,8 @@ pub async fn retry(pool: &PgPool, repo: &RepositoryKey) -> Result<PgQueryResult,
           AND status = $4
         "#,
     )
-    .bind(&repo.endpoint)
-    .bind(&repo.metadata_prefix)
+    .bind(&scope.endpoint)
+    .bind(&scope.metadata_prefix)
     .bind(OaiRecordStatus::Pending.as_str())
     .bind(OaiRecordStatus::Failed.as_str())
     .execute(pool)
@@ -152,7 +149,8 @@ pub async fn retry(pool: &PgPool, repo: &RepositoryKey) -> Result<PgQueryResult,
 /// Apply a harvest event for a single record.
 pub async fn transition(
     pool: &PgPool,
-    key: RecordKey<'_>,
+    scope: &OaiScope,
+    identifier: &str,
     event: &HarvestEvent<'_>,
 ) -> Result<PgQueryResult, Error> {
     match event {
@@ -168,9 +166,9 @@ pub async fn transition(
               AND status = $5
             "#,
             )
-            .bind(&key.repo.endpoint)
-            .bind(&key.repo.metadata_prefix)
-            .bind(key.identifier)
+            .bind(&scope.endpoint)
+            .bind(&scope.metadata_prefix)
+            .bind(identifier)
             .bind(OaiRecordStatus::Available.as_str())
             .bind(OaiRecordStatus::Pending.as_str())
             .execute(pool)
@@ -194,9 +192,9 @@ pub async fn transition(
                   AND status = $6
                 "#,
             )
-            .bind(&key.repo.endpoint)
-            .bind(&key.repo.metadata_prefix)
-            .bind(key.identifier)
+            .bind(&scope.endpoint)
+            .bind(&scope.metadata_prefix)
+            .bind(identifier)
             .bind(OaiRecordStatus::Failed.as_str())
             .bind(message)
             .bind(from.as_str())
@@ -225,9 +223,9 @@ pub async fn transition(
               AND status = $7
             "#,
             )
-            .bind(&key.repo.endpoint)
-            .bind(&key.repo.metadata_prefix)
-            .bind(key.identifier)
+            .bind(&scope.endpoint)
+            .bind(&scope.metadata_prefix)
+            .bind(identifier)
             .bind(OaiRecordStatus::Parsed.as_str())
             .bind(metadata)
             .bind(OaiIndexStatus::Pending.as_str())

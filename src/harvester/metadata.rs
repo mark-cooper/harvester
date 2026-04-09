@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 use crate::{
     harvester::{BatchStats, rules::RuleSet},
-    oai::{HarvestEvent, OaiRecordId, OaiRecordStatus},
+    oai::{HarvestEvent, OaiRecord, OaiRecordStatus},
 };
 
 use super::Harvester;
@@ -29,7 +29,7 @@ pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result
 async fn process_batch(
     harvester: &Harvester,
     rules: &RuleSet,
-    records: &[OaiRecordId],
+    records: &[OaiRecord],
 ) -> BatchStats {
     let mut results = Vec::with_capacity(records.len());
     for record in records {
@@ -41,7 +41,7 @@ async fn process_batch(
 async fn process_record(
     harvester: &Harvester,
     rules: &RuleSet,
-    record: &OaiRecordId,
+    record: &OaiRecord,
 ) -> anyhow::Result<bool> {
     let path = harvester.config.data_dir.join(record.path());
     let file = match File::open(&path) {

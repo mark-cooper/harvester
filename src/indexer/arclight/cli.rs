@@ -14,7 +14,7 @@ use super::{
 use crate::{
     db,
     indexer::{IndexRunOptions, IndexRunner, IndexRunnerConfig},
-    oai::RepositoryKey,
+    oai::OaiScope,
 };
 
 #[derive(Debug, Args)]
@@ -25,8 +25,9 @@ pub struct ArcLightArgs {
     /// Source OAI endpoint url
     pub oai_endpoint: String,
 
-    /// Source OAI repository name
-    pub oai_repository: String,
+    /// Source archival repository name (matches the `repository` tag in
+    /// harvested EAD metadata)
+    pub source_repository: String,
 
     /// Traject configuration file path
     #[arg(short, long, default_value = "traject/ead2_config.rb")]
@@ -81,10 +82,10 @@ pub async fn index(
 ) -> anyhow::Result<()> {
     info!("Indexing records into {}", cfg.repository);
 
-    let repo = RepositoryKey::new(cfg.oai_endpoint.clone(), ARCLIGHT_METADATA_PREFIX);
+    let scope = OaiScope::new(cfg.oai_endpoint.clone(), ARCLIGHT_METADATA_PREFIX);
 
     if cfg.reindex {
-        let result = db::indexer::reindex(&pool, &repo, &cfg.oai_repository).await?;
+        let result = db::indexer::reindex(&pool, &scope, &cfg.source_repository).await?;
         info!(
             "Requeued {} record(s) to pending index status",
             result.rows_affected()
@@ -97,15 +98,15 @@ pub async fn index(
         IndexRunOptions::pending_only()
     };
 
-    let oai_repository = cfg.oai_repository.clone();
+    let source_repository = cfg.source_repository.clone();
     let preview = cfg.preview;
 
     let config = build_config(cfg)?;
     let indexer = ArcLightIndexer::new(config);
 
     let runner_config = IndexRunnerConfig {
-        repo,
-        oai_repository,
+        scope,
+        source_repository,
         run_options,
         preview,
     };

@@ -33,7 +33,7 @@ cargo run -- harvest -m oai_ead -r fixtures/rules.txt https://test.archivesspace
 Using cargo for indexing (ArcLight):
 
 ```bash
-cargo run -- index arclight run \
+cargo run -- index arclight \
     allen-doe-research-center \
     "https://test.archivesspace.org/oai" \
     "Allen Doe Research Center"
@@ -58,6 +58,7 @@ Requeue all parsed/deleted records for a specific endpoint/repository pair:
 
 ```bash
 cargo run -- index arclight \
+    allen-doe-research-center \
     "https://test.archivesspace.org/oai" \
     "Allen Doe Research Center" \
     --reindex

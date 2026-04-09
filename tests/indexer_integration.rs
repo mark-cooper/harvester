@@ -81,8 +81,8 @@ fn build_runner(
     preview: bool,
 ) -> IndexRunner<ArcLightIndexer> {
     let config = IndexRunnerConfig {
-        repo: harvester::RepositoryKey::new(ENDPOINT, ARCLIGHT_METADATA_PREFIX),
-        oai_repository: REPOSITORY.to_string(),
+        scope: harvester::OaiScope::new(ENDPOINT, ARCLIGHT_METADATA_PREFIX),
+        source_repository: REPOSITORY.to_string(),
         run_options,
         preview,
     };
