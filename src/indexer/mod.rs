@@ -97,53 +97,44 @@ impl<T: Indexer> IndexRunner<T> {
 
     async fn process_batch(&self, batch: &[OaiRecord]) -> ProcessStats {
         let mut stats = ProcessStats::default();
+        let items = batch
+            .iter()
+            .map(|r| (r, RecordAction::for_status(r.status)));
 
         if self.config.preview {
-            for record in batch {
-                match RecordAction::for_status(record.status) {
-                    RecordAction::Index => {
-                        info!("Would index record: {}", record.identifier);
-                        stats.indexed += 1;
-                    }
-                    RecordAction::Delete => {
-                        info!("Would delete record: {}", record.identifier);
-                        stats.deleted += 1;
+            for (record, action) in items {
+                info!("Would {action} record: {}", record.identifier);
+                stats.record_success(action);
+            }
+            return stats;
+        }
+
+        let results: Vec<_> = stream::iter(items)
+            .map(|(record, action)| async move {
+                let result = match action {
+                    RecordAction::Index => self.indexer.index_record(record).await,
+                    RecordAction::Delete => self.indexer.delete_record(record).await,
+                };
+                (record, action, result)
+            })
+            .buffer_unordered(CONCURRENCY)
+            .collect()
+            .await;
+
+        for (record, action, result) in results {
+            match result {
+                Ok(()) => {
+                    let event = action.success_event();
+                    if let Ok(true) = self.update(record, &event).await {
+                        stats.record_success(action);
                     }
                 }
-            }
-        } else {
-            let results: Vec<_> = stream::iter(batch)
-                .map(|record| async move {
-                    let result = match RecordAction::for_status(record.status) {
-                        RecordAction::Index => self.indexer.index_record(record).await,
-                        RecordAction::Delete => self.indexer.delete_record(record).await,
-                    };
-
-                    (record, result)
-                })
-                .buffer_unordered(CONCURRENCY)
-                .collect()
-                .await;
-
-            for (record, result) in results {
-                let action = RecordAction::for_status(record.status);
-                match result {
-                    Ok(()) => {
-                        let event = action.success_event();
-                        if let Ok(true) = self.update(record, &event).await {
-                            match action {
-                                RecordAction::Index => stats.indexed += 1,
-                                RecordAction::Delete => stats.deleted += 1,
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        stats.failed += 1;
-                        let message = truncate_middle(&e.to_string(), 200, 200);
-                        error!("Failed to process: {}", message);
-                        let event = action.failure_event(&message);
-                        let _ = self.update(record, &event).await;
-                    }
+                Err(e) => {
+                    stats.failed += 1;
+                    let message = truncate_middle(&e.to_string(), 200, 200);
+                    error!("Failed to process: {}", message);
+                    let event = action.failure_event(&message);
+                    let _ = self.update(record, &event).await;
                 }
             }
         }
@@ -195,6 +186,15 @@ struct ProcessStats {
     indexed: usize,
     deleted: usize,
     failed: usize,
+}
+
+impl ProcessStats {
+    fn record_success(&mut self, action: RecordAction) {
+        match action {
+            RecordAction::Index => self.indexed += 1,
+            RecordAction::Delete => self.deleted += 1,
+        }
+    }
 }
 
 /// Get head & tail of string for debugging shelled-out cmds

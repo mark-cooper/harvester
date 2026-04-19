@@ -1,3 +1,5 @@
+use std::fmt;
+
 use super::status::OaiRecordStatus;
 
 /// Events that drive single-record `oai_records.status` transitions.
@@ -56,5 +58,15 @@ impl RecordAction {
             Self::Index => IndexEvent::IndexFailed { message },
             Self::Delete => IndexEvent::PurgeFailed { message },
         }
+    }
+
+}
+
+impl fmt::Display for RecordAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Index => "index",
+            Self::Delete => "delete",
+        })
     }
 }
