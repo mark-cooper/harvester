@@ -59,7 +59,6 @@ impl RecordAction {
             Self::Delete => IndexEvent::PurgeFailed { message },
         }
     }
-
 }
 
 impl fmt::Display for RecordAction {

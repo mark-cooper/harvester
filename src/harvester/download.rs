@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use futures::stream::{self, StreamExt};
+use oai_pmh::client::response::GetRecordResponse;
 use oai_pmh::{Client, GetRecordArgs};
 use tokio::fs;
 use tokio::time::timeout;
@@ -40,79 +41,59 @@ async fn process_record(
     harvester: &Harvester,
     record: &OaiRecord,
 ) -> anyhow::Result<bool> {
+    let outcome = fetch_and_write(client, harvester, record).await;
+    let event = match &outcome {
+        Ok(()) => HarvestEvent::DownloadSucceeded,
+        Err(message) => HarvestEvent::DownloadFailed { message },
+    };
+    harvester.update(record, &event).await
+}
+
+async fn fetch_and_write(
+    client: &Client,
+    harvester: &Harvester,
+    record: &OaiRecord,
+) -> Result<(), String> {
+    let response = fetch_with_retries(client, harvester, record).await?;
+
+    let payload = response
+        .payload
+        .ok_or_else(|| "OAI response missing payload".to_string())?;
+
+    let path = harvester.config.data_dir.join(record.path());
+    write_metadata_to_file(path, &payload.record.metadata)
+        .await
+        .map_err(|e| format!("Failed to write metadata file: {}", e))
+}
+
+async fn fetch_with_retries(
+    client: &Client,
+    harvester: &Harvester,
+    record: &OaiRecord,
+) -> Result<GetRecordResponse, String> {
     let duration = Duration::from_secs(harvester.config.oai_timeout);
     let max_retries = harvester.config.oai_retries;
+    let mut attempts = 0u32;
 
-    let result = {
-        let mut attempts = 0u32;
-        loop {
-            let args =
-                GetRecordArgs::new(&record.identifier, &harvester.config.scope.metadata_prefix);
-            match timeout(duration, client.get_record(args)).await {
-                Ok(result) => break result,
-                Err(_) if attempts < max_retries => {
-                    attempts += 1;
-                    warn!(
-                        "OAI get_record timed out for {}, retry {}/{}",
-                        record.identifier, attempts, max_retries
-                    );
-                    tokio::time::sleep(Duration::from_millis(500 * 2u64.pow(attempts - 1))).await;
-                }
-                Err(_) => {
-                    let message = format!(
-                        "OAI get_record timed out after {}s",
-                        harvester.config.oai_timeout
-                    );
-                    return harvester
-                        .update(record, &HarvestEvent::DownloadFailed { message: &message })
-                        .await;
-                }
+    loop {
+        let args = GetRecordArgs::new(&record.identifier, &harvester.config.scope.metadata_prefix);
+        match timeout(duration, client.get_record(args)).await {
+            Ok(Ok(response)) => return Ok(response),
+            Ok(Err(error)) => return Err(format!("Failed to fetch OAI record: {}", error)),
+            Err(_) if attempts < max_retries => {
+                attempts += 1;
+                warn!(
+                    "OAI get_record timed out for {}, retry {}/{}",
+                    record.identifier, attempts, max_retries
+                );
+                tokio::time::sleep(Duration::from_millis(500 * 2u64.pow(attempts - 1))).await;
             }
-        }
-    };
-
-    match result {
-        Ok(response) => match response.payload {
-            Some(payload) => {
-                let metadata = &payload.record.metadata;
-                let path = harvester.config.data_dir.join(record.path());
-
-                if let Err(error) = write_metadata_to_file(path, metadata).await {
-                    harvester
-                        .update(
-                            record,
-                            &HarvestEvent::DownloadFailed {
-                                message: format!("Failed to write metadata file: {}", error)
-                                    .as_str(),
-                            },
-                        )
-                        .await
-                } else {
-                    harvester
-                        .update(record, &HarvestEvent::DownloadSucceeded)
-                        .await
-                }
+            Err(_) => {
+                return Err(format!(
+                    "OAI get_record timed out after {}s",
+                    harvester.config.oai_timeout
+                ));
             }
-            None => {
-                harvester
-                    .update(
-                        record,
-                        &HarvestEvent::DownloadFailed {
-                            message: "OAI response missing payload",
-                        },
-                    )
-                    .await
-            }
-        },
-        Err(error) => {
-            harvester
-                .update(
-                    record,
-                    &HarvestEvent::DownloadFailed {
-                        message: format!("Failed to fetch OAI record: {}", error).as_str(),
-                    },
-                )
-                .await
         }
     }
 }
