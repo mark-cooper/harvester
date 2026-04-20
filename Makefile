@@ -50,7 +50,7 @@ diff-traject: ## Diff local traject vs. upstream
 fmt: ## Format code
 	cargo fmt
 
-lint: ## Run clippy
+lint: fmt ## Run clippy
 	cargo clippy --all-targets -- -D warnings
 
 install: build ## Install binary to ~/.cargo/bin
