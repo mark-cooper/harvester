@@ -42,7 +42,9 @@ fn ensure_traject_available() -> anyhow::Result<()> {
         .args(["--version"])
         .status()
         .map_err(|e| {
-            anyhow::anyhow!("failed to run `traject --version` (is traject installed and on PATH?): {e}")
+            anyhow::anyhow!(
+                "failed to run `traject --version` (is traject installed and on PATH?): {e}"
+            )
         })?;
 
     if !status.success() {
