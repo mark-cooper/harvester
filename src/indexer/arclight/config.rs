@@ -38,7 +38,12 @@ pub fn build_config(cfg: ArcLightArgs) -> anyhow::Result<ArcLightIndexerConfig> 
 }
 
 fn ensure_traject_available() -> anyhow::Result<()> {
-    let status = Command::new("traject").args(["--version"]).status()?;
+    let status = Command::new("traject")
+        .args(["--version"])
+        .status()
+        .map_err(|e| {
+            anyhow::anyhow!("failed to run `traject --version` (is traject installed and on PATH?): {e}")
+        })?;
 
     if !status.success() {
         anyhow::bail!("traject failed with exit code: {:?}", status.code());
