@@ -212,6 +212,10 @@ end
 to_field "level_ssm" do |record, accumulator|
   level = record.attribute("level")&.value
   other_level = record.attribute("otherlevel")&.value
+  # ArcLight's Parents#as_parents treats any ancestor with level "Collection"
+  # as an eadid-bearing collection root and raises IDNotFound on components.
+  # Rewrite component-level "collection" to "series" to avoid the crash.
+  level = "series" if level&.downcase == "collection"
   accumulator << Arclight::LevelLabel.new(level, other_level).to_s
 end
 
