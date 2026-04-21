@@ -94,6 +94,20 @@ pub async fn reindex(
     .await
 }
 
+pub async fn repository_exists(pool: &PgPool, repository: &str) -> Result<bool, Error> {
+    sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM oai_records
+            WHERE metadata->'repository' ? $1
+        )
+        "#,
+    )
+    .bind(repository)
+    .fetch_one(pool)
+    .await
+}
+
 /// Apply an index event for a single record. Each arm encodes its
 /// `required_status` (record-status guard), accepted predecessor index
 /// statuses, and target index status directly.

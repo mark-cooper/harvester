@@ -2,7 +2,7 @@ mod support;
 
 use harvester::{
     IndexSelectionMode, OaiRecord,
-    db::indexer::{FetchIndexCandidatesParams, fetch, reindex, transition},
+    db::indexer::{FetchIndexCandidatesParams, fetch, reindex, repository_exists, transition},
     oai::{IndexEvent, OaiRecordStatus},
 };
 use support::{
@@ -258,6 +258,30 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     assert_eq!(snapshot.index_message, "");
     assert!(snapshot.purged_at_set);
     assert!(!snapshot.indexed_at_set);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn repository_exists_reports_presence_and_absence() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "present",
+        DEFAULT_DATESTAMP,
+        "parsed",
+        "pending",
+        "",
+        0,
+        metadata(REPOSITORY),
+    )
+    .await?;
+
+    assert!(repository_exists(&pool, REPOSITORY).await?);
+    assert!(!repository_exists(&pool, "Missing Repository").await?);
 
     Ok(())
 }

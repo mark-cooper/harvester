@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::{StreamExt, future::BoxFuture, stream};
 use sqlx::PgPool;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     OaiRecord, batch,
-    db::indexer::{FetchIndexCandidatesParams, fetch, transition},
+    db::indexer::{FetchIndexCandidatesParams, fetch, repository_exists, transition},
     oai::{IndexEvent, OaiScope, RecordAction},
 };
 
@@ -54,6 +54,14 @@ impl<T: Indexer> IndexRunner<T> {
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
+        if !repository_exists(&self.pool, &self.config.source_repository).await? {
+            warn!(
+                "No matching repository was found for: {}",
+                self.config.source_repository
+            );
+            return Ok(());
+        }
+
         let stats = self.process_records().await?;
 
         info!("Indexed records: {}", stats.indexed);
