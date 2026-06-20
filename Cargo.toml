@@ -11,12 +11,12 @@ clap = { version = "4.6.1", features = ["derive", "env"] }
 csv = "1.4.0"
 futures = "0.3.32"
 oai-pmh = "0.5.1"
-quick-xml = "0.39.2"
+quick-xml = "0.40.1"
 rand = "0.10.1"
-reqwest = "0.13.3"
-serde_json = "1.0.149"
+reqwest = "0.13.4"
+serde_json = "1.0.150"
 shellexpand = "3"
-sqlx = { version = "0.8.6", features = [
+sqlx = { version = "0.9.0", features = [
   "postgres",
   "runtime-tokio",
   "macros",
