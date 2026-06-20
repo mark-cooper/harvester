@@ -436,7 +436,7 @@ async fn ensure_test_database_exists(database_url: &str) -> anyhow::Result<()> {
     let create_database_query =
         format!("CREATE DATABASE \"{}\"", database_name.replace('"', "\"\""));
 
-    match sqlx::query(&create_database_query)
+    match sqlx::query(sqlx::AssertSqlSafe(create_database_query))
         .execute(&admin_pool)
         .await
     {
