@@ -151,8 +151,8 @@ impl<T: Indexer> IndexRunner<T> {
     }
 
     async fn update(&self, record: &OaiRecord, event: &IndexEvent<'_>) -> anyhow::Result<bool> {
-        match transition(&self.pool, &self.config.scope, &record.identifier, event).await {
-            Ok(result) => Ok(result.rows_affected() > 0),
+        match transition(&self.pool, record.id, event).await {
+            Ok(rows_affected) => Ok(rows_affected > 0),
             Err(_) => Ok(false),
         }
     }

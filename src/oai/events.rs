@@ -14,7 +14,7 @@ pub enum HarvestEvent<'a> {
     MetadataFailed { message: &'a str },
 }
 
-/// Events that drive single-record `oai_records.index_status` transitions.
+/// Events that drive single-record `indexer_records.status` transitions.
 ///
 /// Batch operations (e.g. reindex of a whole repository) live as standalone
 /// db functions rather than enum variants.

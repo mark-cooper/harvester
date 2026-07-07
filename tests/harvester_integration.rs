@@ -6,8 +6,8 @@ use harvester::{OaiRecord, OaiScope, db::harvester::retry, oai::OaiRecordStatus}
 use support::{
     DEFAULT_DATESTAMP, EAD_XML, GetRecordSpec, MockOaiConfig, acquire_test_lock,
     count_records_for_identifier, create_rules_file, create_temp_dir, create_temp_file,
-    fetch_fingerprint, fetch_record_snapshot, header_spec, insert_record, run_harvest,
-    setup_test_pool, start_mock_oai_server,
+    fetch_fingerprint, fetch_record_id, fetch_record_snapshot, header_spec, insert_record,
+    insert_record_with_index, run_harvest, setup_test_pool, start_mock_oai_server,
 };
 
 #[tokio::test]
@@ -34,9 +34,14 @@ async fn run_without_rules_leaves_records_available() -> anyhow::Result<()> {
     assert_eq!(snapshot.status, "available");
     assert!(snapshot.message.is_empty());
     assert_eq!(snapshot.metadata, serde_json::json!({}));
+    assert_eq!(
+        snapshot.index_status, None,
+        "no indexer row until parsed or deleted"
+    );
 
     let fingerprint = fetch_fingerprint(&pool, &server.endpoint, identifier).await?;
     let record = OaiRecord {
+        id: 0,
         identifier: identifier.to_string(),
         fingerprint,
         status: OaiRecordStatus::Available,
@@ -63,6 +68,56 @@ async fn import_marks_deleted_headers_as_deleted() -> anyhow::Result<()> {
     let snapshot = fetch_record_snapshot(&pool, &server.endpoint, identifier).await?;
     assert_eq!(snapshot.status, "deleted");
     assert!(snapshot.message.is_empty());
+    assert_eq!(
+        snapshot.index_status.as_deref(),
+        Some("pending"),
+        "deletion queues the record for purge"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn import_deleted_preserves_index_history_for_purge() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+    let data_dir = create_temp_dir("import-deleted-history")?;
+    let identifier = "record-deleted-history";
+    let newer_datestamp = "2026-02-10";
+
+    let server = start_mock_oai_server(MockOaiConfig {
+        headers: vec![header_spec(identifier, newer_datestamp, Some("deleted"))],
+        records: HashMap::new(),
+    })
+    .await?;
+
+    // An indexed record with failure history that the import will mark deleted.
+    insert_record_with_index(
+        &pool,
+        &server.endpoint,
+        identifier,
+        DEFAULT_DATESTAMP,
+        "parsed",
+        "indexed",
+        "",
+        2,
+        serde_json::json!({ "repository": ["History Repository"] }),
+    )
+    .await?;
+    let record_id = fetch_record_id(&pool, &server.endpoint, identifier).await?;
+    sqlx::query("UPDATE indexer_records SET indexed_at = NOW() WHERE record_id = $1")
+        .bind(record_id)
+        .execute(&pool)
+        .await?;
+
+    run_harvest(&pool, &server.endpoint, data_dir, None).await?;
+
+    let snapshot = fetch_record_snapshot(&pool, &server.endpoint, identifier).await?;
+    assert_eq!(snapshot.status, "deleted");
+    assert_eq!(snapshot.index_status.as_deref(), Some("pending"));
+    // Partial reset: the record is still in the index, awaiting purge.
+    assert_eq!(snapshot.index_attempts, Some(2));
+    assert!(snapshot.indexed_at_set);
+    assert!(!snapshot.purged_at_set);
     Ok(())
 }
 
@@ -311,6 +366,7 @@ async fn metadata_missing_file_marks_failed_and_continues() -> anyhow::Result<()
     let present_fingerprint =
         fetch_fingerprint(&pool, &server.endpoint, present_identifier).await?;
     let present_record = OaiRecord {
+        id: 0,
         identifier: present_identifier.to_string(),
         fingerprint: present_fingerprint,
         status: OaiRecordStatus::Available,
@@ -361,6 +417,7 @@ async fn metadata_invalid_xml_marks_failed() -> anyhow::Result<()> {
 
     let fingerprint = fetch_fingerprint(&pool, &server.endpoint, identifier).await?;
     let record = OaiRecord {
+        id: 0,
         identifier: identifier.to_string(),
         fingerprint,
         status: OaiRecordStatus::Available,
@@ -413,6 +470,11 @@ async fn full_pipeline_with_rules_parses_metadata() -> anyhow::Result<()> {
     assert_eq!(
         snapshot.metadata["repository"],
         serde_json::json!(["Integration Repository"])
+    );
+    assert_eq!(
+        snapshot.index_status.as_deref(),
+        Some("pending"),
+        "parse queues the record for indexing"
     );
     Ok(())
 }

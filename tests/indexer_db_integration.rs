@@ -6,8 +6,8 @@ use harvester::{
     oai::{IndexEvent, OaiRecordStatus},
 };
 use support::{
-    DEFAULT_DATESTAMP, acquire_test_lock, fetch_record_snapshot, insert_record_with_index,
-    metadata, scope, setup_test_pool,
+    DEFAULT_DATESTAMP, acquire_test_lock, fetch_record_id, fetch_record_snapshot,
+    insert_record_with_index, metadata, scope, setup_test_pool,
 };
 
 const ENDPOINT: &str = "https://example.org/oai";
@@ -204,58 +204,47 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     )
     .await?;
 
+    let index_transition = fetch_record_id(&pool, ENDPOINT, "index-transition").await?;
+    let purge_transition = fetch_record_id(&pool, ENDPOINT, "purge-transition").await?;
+
     transition(
         &pool,
-        &scope(ENDPOINT),
-        "index-transition",
+        index_transition,
         &IndexEvent::IndexFailed {
             message: "traject failed",
         },
     )
     .await?;
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "index-transition").await?;
-    assert_eq!(snapshot.index_status, "index_failed");
-    assert_eq!(snapshot.index_attempts, 1);
-    assert_eq!(snapshot.index_message, "traject failed");
+    assert_eq!(snapshot.index_status.as_deref(), Some("index_failed"));
+    assert_eq!(snapshot.index_attempts, Some(1));
+    assert_eq!(snapshot.index_message.as_deref(), Some("traject failed"));
     assert!(!snapshot.indexed_at_set);
 
-    transition(
-        &pool,
-        &scope(ENDPOINT),
-        "index-transition",
-        &IndexEvent::IndexSucceeded,
-    )
-    .await?;
+    transition(&pool, index_transition, &IndexEvent::IndexSucceeded).await?;
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "index-transition").await?;
-    assert_eq!(snapshot.index_status, "indexed");
-    assert_eq!(snapshot.index_message, "");
+    assert_eq!(snapshot.index_status.as_deref(), Some("indexed"));
+    assert_eq!(snapshot.index_message.as_deref(), Some(""));
     assert!(snapshot.indexed_at_set);
     assert!(!snapshot.purged_at_set);
 
     transition(
         &pool,
-        &scope(ENDPOINT),
-        "purge-transition",
+        purge_transition,
         &IndexEvent::PurgeFailed {
             message: "solr failed",
         },
     )
     .await?;
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "purge-transition").await?;
-    assert_eq!(snapshot.index_status, "purge_failed");
-    assert_eq!(snapshot.index_attempts, 1);
-    assert_eq!(snapshot.index_message, "solr failed");
+    assert_eq!(snapshot.index_status.as_deref(), Some("purge_failed"));
+    assert_eq!(snapshot.index_attempts, Some(1));
+    assert_eq!(snapshot.index_message.as_deref(), Some("solr failed"));
 
-    transition(
-        &pool,
-        &scope(ENDPOINT),
-        "purge-transition",
-        &IndexEvent::PurgeSucceeded,
-    )
-    .await?;
+    transition(&pool, purge_transition, &IndexEvent::PurgeSucceeded).await?;
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "purge-transition").await?;
-    assert_eq!(snapshot.index_status, "purged");
-    assert_eq!(snapshot.index_message, "");
+    assert_eq!(snapshot.index_status.as_deref(), Some("purged"));
+    assert_eq!(snapshot.index_message.as_deref(), Some(""));
     assert!(snapshot.purged_at_set);
     assert!(!snapshot.indexed_at_set);
 
@@ -333,24 +322,27 @@ async fn reindex_requeues_only_matching_repository_records() -> anyhow::Result<(
 
     let parsed = fetch_record_snapshot(&pool, ENDPOINT, "parsed-indexed").await?;
     assert_eq!(parsed.status, "parsed");
-    assert_eq!(parsed.index_status, "pending");
-    assert_eq!(parsed.index_attempts, 0);
-    assert_eq!(parsed.index_message, "");
+    assert_eq!(parsed.index_status.as_deref(), Some("pending"));
+    assert_eq!(parsed.index_attempts, Some(0));
+    assert_eq!(parsed.index_message.as_deref(), Some(""));
     assert!(!parsed.indexed_at_set);
 
     let deleted = fetch_record_snapshot(&pool, ENDPOINT, "deleted-purged").await?;
     assert_eq!(deleted.status, "deleted");
-    assert_eq!(deleted.index_status, "pending");
-    assert_eq!(deleted.index_attempts, 0);
-    assert_eq!(deleted.index_message, "");
+    assert_eq!(deleted.index_status.as_deref(), Some("pending"));
+    assert_eq!(deleted.index_attempts, Some(0));
+    assert_eq!(deleted.index_message.as_deref(), Some(""));
     assert!(!deleted.purged_at_set);
 
     let other_repository =
         fetch_record_snapshot(&pool, ENDPOINT, "parsed-other-repository").await?;
     assert_eq!(other_repository.status, "parsed");
-    assert_eq!(other_repository.index_status, "indexed");
-    assert_eq!(other_repository.index_attempts, 3);
-    assert_eq!(other_repository.index_message, "should stay indexed");
+    assert_eq!(other_repository.index_status.as_deref(), Some("indexed"));
+    assert_eq!(other_repository.index_attempts, Some(3));
+    assert_eq!(
+        other_repository.index_message.as_deref(),
+        Some("should stay indexed")
+    );
 
     Ok(())
 }

@@ -88,13 +88,7 @@ impl Harvester {
         event: &HarvestEvent<'a>,
     ) -> anyhow::Result<bool> {
         match transition(&self.pool, &self.config.scope, &record.identifier, event).await {
-            Ok(result) => {
-                if result.rows_affected() == 0 {
-                    Ok(false)
-                } else {
-                    Ok(true)
-                }
-            }
+            Ok(rows_affected) => Ok(rows_affected > 0),
             Err(_) => Ok(false),
         }
     }

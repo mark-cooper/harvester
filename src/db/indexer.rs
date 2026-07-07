@@ -28,19 +28,20 @@ pub async fn fetch(
 
     sqlx::query_as::<_, OaiRecord>(
         r#"
-        SELECT identifier, fingerprint, status
-        FROM oai_records
-        WHERE endpoint = $1
-          AND metadata_prefix = $2
+        SELECT r.id, r.identifier, r.fingerprint, r.status
+        FROM oai_records r
+        JOIN indexer_records i ON i.record_id = r.id
+        WHERE r.endpoint = $1
+          AND r.metadata_prefix = $2
           AND (
-                (status = $3 AND index_status = $4)
-             OR (status = $5 AND index_status = $6)
+                (r.status = $3 AND i.status = $4)
+             OR (r.status = $5 AND i.status = $6)
           )
-          AND metadata->'repository' ? $7
-          AND ($8::TEXT IS NULL OR identifier > $8)
-          AND ($9::INT IS NULL OR index_attempts < $9)
-          AND ($10::TEXT IS NULL OR index_message ILIKE ('%' || $10 || '%'))
-        ORDER BY identifier
+          AND r.metadata->'repository' ? $7
+          AND ($8::TEXT IS NULL OR r.identifier > $8)
+          AND ($9::INT IS NULL OR i.attempts < $9)
+          AND ($10::TEXT IS NULL OR i.message ILIKE ('%' || $10 || '%'))
+        ORDER BY r.identifier
         LIMIT 100
         "#,
     )
@@ -58,8 +59,8 @@ pub async fn fetch(
     .await
 }
 
-/// Batch reindex: reset index_status to pending for all parsed/deleted records
-/// in the given source repository. Wildcard transition: any index_status -> pending.
+/// Batch reindex: reset the index lifecycle to pending for all parsed/deleted
+/// records in the given source repository. Wildcard transition: any -> pending.
 pub async fn reindex(
     pool: &PgPool,
     scope: &OaiScope,
@@ -72,17 +73,19 @@ pub async fn reindex(
 
     sqlx::query(
         r#"
-        UPDATE oai_records
-        SET index_status = $3,
-            index_message = '',
-            index_attempts = 0,
+        UPDATE indexer_records i
+        SET status = $3,
+            message = '',
+            attempts = 0,
             indexed_at = NULL,
             purged_at = NULL,
-            index_last_checked_at = NULL
-        WHERE endpoint = $1
-          AND metadata_prefix = $2
-          AND status = ANY($4::text[])
-          AND metadata->'repository' ? $5
+            last_checked_at = NULL
+        FROM oai_records r
+        WHERE i.record_id = r.id
+          AND r.endpoint = $1
+          AND r.metadata_prefix = $2
+          AND r.status = ANY($4::text[])
+          AND r.metadata->'repository' ? $5
         "#,
     )
     .bind(&scope.endpoint)
@@ -108,15 +111,15 @@ pub async fn repository_exists(pool: &PgPool, repository: &str) -> Result<bool, 
     .await
 }
 
-/// Apply an index event for a single record. Each arm encodes its
-/// `required_status` (record-status guard), accepted predecessor index
-/// statuses, and target index status directly.
+/// Apply an index event for a single record, keyed by `oai_records.id`. Each
+/// arm encodes its `required_status` (record-status guard), accepted
+/// predecessor index statuses, and target index status directly. Returns the
+/// number of affected `indexer_records` rows (0 or 1).
 pub async fn transition(
     pool: &PgPool,
-    scope: &OaiScope,
-    identifier: &str,
+    record_id: i64,
     event: &IndexEvent<'_>,
-) -> Result<PgQueryResult, Error> {
+) -> Result<u64, Error> {
     // Index transitions: pending|index_failed -> indexed|index_failed (for parsed records),
     //                    pending|purge_failed -> purged|purge_failed   (for deleted records).
     let (required_status, from_a, from_b) = match event {
@@ -132,26 +135,24 @@ pub async fn transition(
         ),
     };
 
-    match event {
+    let result = match event {
         IndexEvent::IndexSucceeded => {
             sqlx::query(
                 r#"
-            UPDATE oai_records
-            SET index_status = $4,
-                index_message = '',
+            UPDATE indexer_records
+            SET status = $2,
+                message = '',
                 indexed_at = NOW(),
                 purged_at = NULL,
-                index_last_checked_at = NOW()
-            WHERE endpoint = $1
-              AND metadata_prefix = $2
-              AND identifier = $3
-              AND status = $5
-              AND (index_status = $6 OR index_status = $7)
+                last_checked_at = NOW()
+            WHERE record_id = $1
+              AND (status = $4 OR status = $5)
+              AND EXISTS (
+                  SELECT 1 FROM oai_records r WHERE r.id = $1 AND r.status = $3
+              )
             "#,
             )
-            .bind(&scope.endpoint)
-            .bind(&scope.metadata_prefix)
-            .bind(identifier)
+            .bind(record_id)
             .bind(OaiIndexStatus::Indexed.as_str())
             .bind(required_status.as_str())
             .bind(from_a.as_str())
@@ -168,21 +169,19 @@ pub async fn transition(
             };
             sqlx::query(
                 r#"
-                UPDATE oai_records
-                SET index_status = $4,
-                    index_message = $5,
-                    index_attempts = index_attempts + 1,
-                    index_last_checked_at = NOW()
-                WHERE endpoint = $1
-                  AND metadata_prefix = $2
-                  AND identifier = $3
-                  AND status = $6
-                  AND (index_status = $7 OR index_status = $8)
+                UPDATE indexer_records
+                SET status = $2,
+                    message = $3,
+                    attempts = attempts + 1,
+                    last_checked_at = NOW()
+                WHERE record_id = $1
+                  AND (status = $5 OR status = $6)
+                  AND EXISTS (
+                      SELECT 1 FROM oai_records r WHERE r.id = $1 AND r.status = $4
+                  )
                 "#,
             )
-            .bind(&scope.endpoint)
-            .bind(&scope.metadata_prefix)
-            .bind(identifier)
+            .bind(record_id)
             .bind(to.as_str())
             .bind(message)
             .bind(required_status.as_str())
@@ -195,22 +194,20 @@ pub async fn transition(
         IndexEvent::PurgeSucceeded => {
             sqlx::query(
                 r#"
-            UPDATE oai_records
-            SET index_status = $4,
-                index_message = '',
+            UPDATE indexer_records
+            SET status = $2,
+                message = '',
                 indexed_at = NULL,
                 purged_at = NOW(),
-                index_last_checked_at = NOW()
-            WHERE endpoint = $1
-              AND metadata_prefix = $2
-              AND identifier = $3
-              AND status = $5
-              AND (index_status = $6 OR index_status = $7)
+                last_checked_at = NOW()
+            WHERE record_id = $1
+              AND (status = $4 OR status = $5)
+              AND EXISTS (
+                  SELECT 1 FROM oai_records r WHERE r.id = $1 AND r.status = $3
+              )
             "#,
             )
-            .bind(&scope.endpoint)
-            .bind(&scope.metadata_prefix)
-            .bind(identifier)
+            .bind(record_id)
             .bind(OaiIndexStatus::Purged.as_str())
             .bind(required_status.as_str())
             .bind(from_a.as_str())
@@ -218,5 +215,7 @@ pub async fn transition(
             .execute(pool)
             .await
         }
-    }
+    };
+
+    result.map(|r| r.rows_affected())
 }

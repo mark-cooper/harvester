@@ -94,10 +94,12 @@ PGHOST=localhost PGUSER=admin PGPASSWORD=admin psql \
 Resetting index failed records to pending via the db:
 
 ```
-UPDATE oai_records
-SET index_status = 'pending', index_attempts = 0, index_message = ''
-WHERE index_status = 'index_failed'
-AND endpoint = 'https://example.com/oai';
+UPDATE indexer_records i
+SET status = 'pending', attempts = 0, message = ''
+FROM oai_records r
+WHERE i.record_id = r.id
+AND i.status = 'index_failed'
+AND r.endpoint = 'https://example.com/oai';
 ```
 
 ## Docker

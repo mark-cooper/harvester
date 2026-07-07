@@ -33,15 +33,17 @@ const RULES_CSV: &str =
 static MIGRATOR: Migrator = sqlx::migrate!();
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
+/// Index fields are `None` when the record has no `indexer_records` row
+/// (i.e. it has never been parsed or deleted).
 pub struct RecordSnapshot {
     pub status: String,
     pub message: String,
     pub datestamp: String,
     pub version: i32,
     pub metadata: serde_json::Value,
-    pub index_status: String,
-    pub index_message: String,
-    pub index_attempts: i32,
+    pub index_status: Option<String>,
+    pub index_message: Option<String>,
+    pub index_attempts: Option<i32>,
     pub indexed_at_set: bool,
     pub purged_at_set: bool,
 }
@@ -185,13 +187,11 @@ pub async fn insert_record_with_index(
     index_attempts: i32,
     metadata: serde_json::Value,
 ) -> anyhow::Result<()> {
-    sqlx::query(
+    let record_id = sqlx::query_scalar::<_, i64>(
         r#"
-        INSERT INTO oai_records (
-            endpoint, metadata_prefix, identifier, datestamp, status, metadata,
-            index_status, index_message, index_attempts
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO oai_records (endpoint, metadata_prefix, identifier, datestamp, status, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
         "#,
     )
     .bind(endpoint)
@@ -200,6 +200,16 @@ pub async fn insert_record_with_index(
     .bind(datestamp)
     .bind(status)
     .bind(metadata)
+    .fetch_one(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO indexer_records (record_id, status, message, attempts)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(record_id)
     .bind(index_status)
     .bind(index_message)
     .bind(index_attempts)
@@ -207,6 +217,27 @@ pub async fn insert_record_with_index(
     .await?;
 
     Ok(())
+}
+
+pub async fn fetch_record_id(
+    pool: &PgPool,
+    endpoint: &str,
+    identifier: &str,
+) -> anyhow::Result<i64> {
+    let id = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT id
+        FROM oai_records
+        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
+        "#,
+    )
+    .bind(endpoint)
+    .bind(METADATA_PREFIX)
+    .bind(identifier)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(id)
 }
 
 pub async fn fetch_fingerprint(
@@ -237,12 +268,15 @@ pub async fn fetch_record_snapshot(
 ) -> anyhow::Result<RecordSnapshot> {
     let row = sqlx::query(
         r#"
-        SELECT status, message, datestamp, version, metadata,
-               index_status, index_message, index_attempts,
-               indexed_at IS NOT NULL AS indexed_at_set,
-               purged_at IS NOT NULL AS purged_at_set
-        FROM oai_records
-        WHERE endpoint = $1 AND metadata_prefix = $2 AND identifier = $3
+        SELECT r.status, r.message, r.datestamp, r.version, r.metadata,
+               i.status AS index_status,
+               i.message AS index_message,
+               i.attempts AS index_attempts,
+               i.indexed_at IS NOT NULL AS indexed_at_set,
+               i.purged_at IS NOT NULL AS purged_at_set
+        FROM oai_records r
+        LEFT JOIN indexer_records i ON i.record_id = r.id
+        WHERE r.endpoint = $1 AND r.metadata_prefix = $2 AND r.identifier = $3
         "#,
     )
     .bind(endpoint)

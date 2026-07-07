@@ -12,7 +12,7 @@ pub(crate) async fn fetch_record_for_summary(
 ) -> Result<Option<OaiRecord>, Error> {
     sqlx::query_as::<_, OaiRecord>(
         r#"
-        SELECT identifier, fingerprint, status
+        SELECT id, identifier, fingerprint, status
         FROM oai_records
         WHERE endpoint = $1
           AND metadata_prefix = $2

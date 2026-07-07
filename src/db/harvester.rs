@@ -1,5 +1,5 @@
 use sqlx::postgres::PgQueryResult;
-use sqlx::{Error, PgPool};
+use sqlx::{Error, PgPool, Postgres, Transaction};
 
 use crate::oai::{HarvestEvent, OaiHeader, OaiIndexStatus, OaiRecord, OaiRecordStatus, OaiScope};
 
@@ -32,7 +32,9 @@ pub(crate) async fn batch_upsert_records(
     let statuses: Vec<_> = records.iter().map(|r| r.status.as_str()).collect();
     let batch_len = records.len() as i32;
 
-    let statuses = sqlx::query_scalar::<_, String>(
+    let mut tx = pool.begin().await?;
+
+    let rows = sqlx::query_as::<_, (i64, String)>(
         r#"
         INSERT INTO oai_records (
             endpoint, metadata_prefix, identifier, datestamp, status, message, last_checked_at
@@ -50,27 +52,11 @@ pub(crate) async fn batch_upsert_records(
             datestamp = EXCLUDED.datestamp,
             status = EXCLUDED.status,
             message = '',
-            index_status = CASE
-                WHEN EXCLUDED.status = $8 THEN $9
-                ELSE oai_records.index_status
-            END,
-            index_message = CASE
-                WHEN EXCLUDED.status = $8 THEN ''
-                ELSE oai_records.index_message
-            END,
-            purged_at = CASE
-                WHEN EXCLUDED.status = $8 THEN NULL
-                ELSE oai_records.purged_at
-            END,
-            index_last_checked_at = CASE
-                WHEN EXCLUDED.status = $8 THEN NULL
-                ELSE oai_records.index_last_checked_at
-            END,
             version = oai_records.version + 1,
             last_checked_at = EXCLUDED.last_checked_at
         WHERE oai_records.status != $7
         AND oai_records.datestamp != EXCLUDED.datestamp
-        RETURNING status
+        RETURNING id, status
         "#,
     )
     .bind(&scope.endpoint)
@@ -80,16 +66,23 @@ pub(crate) async fn batch_upsert_records(
     .bind(&statuses)
     .bind(batch_len)
     .bind(OaiRecordStatus::Failed.as_str())
-    .bind(OaiRecordStatus::Deleted.as_str())
-    .bind(OaiIndexStatus::Pending.as_str())
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
 
-    let deleted = statuses
+    let deleted_ids: Vec<i64> = rows
         .iter()
-        .filter(|status| status.as_str() == OaiRecordStatus::Deleted.as_str())
-        .count();
-    let processed = statuses.len();
+        .filter(|(_, status)| status.as_str() == OaiRecordStatus::Deleted.as_str())
+        .map(|(id, _)| *id)
+        .collect();
+
+    if !deleted_ids.is_empty() {
+        requeue_deleted_for_purge(&mut tx, &deleted_ids).await?;
+    }
+
+    tx.commit().await?;
+
+    let deleted = deleted_ids.len();
+    let processed = rows.len();
     let imported = processed.saturating_sub(deleted);
 
     Ok(ImportStats {
@@ -97,6 +90,30 @@ pub(crate) async fn batch_upsert_records(
         imported,
         deleted,
     })
+}
+
+/// Requeue deleted records for purge: `* -> pending`. A partial reset —
+/// `attempts` and `indexed_at` are preserved on existing rows (the record is
+/// still in the index, awaiting purge).
+async fn requeue_deleted_for_purge(
+    tx: &mut Transaction<'_, Postgres>,
+    record_ids: &[i64],
+) -> Result<PgQueryResult, Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO indexer_records (record_id, status)
+        SELECT UNNEST($1::bigint[]), $2
+        ON CONFLICT (record_id) DO UPDATE SET
+            status = $2,
+            message = '',
+            purged_at = NULL,
+            last_checked_at = NULL
+        "#,
+    )
+    .bind(record_ids)
+    .bind(OaiIndexStatus::Pending.as_str())
+    .execute(&mut **tx)
+    .await
 }
 
 pub(crate) async fn fetch(
@@ -107,7 +124,7 @@ pub(crate) async fn fetch(
 ) -> Result<Vec<OaiRecord>, Error> {
     sqlx::query_as::<_, OaiRecord>(
         r#"
-        SELECT identifier, fingerprint, status
+        SELECT id, identifier, fingerprint, status
         FROM oai_records
         WHERE endpoint = $1
           AND metadata_prefix = $2
@@ -146,13 +163,14 @@ pub async fn retry(pool: &PgPool, scope: &OaiScope) -> Result<PgQueryResult, Err
     .await
 }
 
-/// Apply a harvest event for a single record.
+/// Apply a harvest event for a single record. Returns the number of affected
+/// `oai_records` rows (0 or 1).
 pub async fn transition(
     pool: &PgPool,
     scope: &OaiScope,
     identifier: &str,
     event: &HarvestEvent<'_>,
-) -> Result<PgQueryResult, Error> {
+) -> Result<u64, Error> {
     match event {
         // pending -> available
         HarvestEvent::DownloadSucceeded => {
@@ -173,6 +191,7 @@ pub async fn transition(
             .bind(OaiRecordStatus::Pending.as_str())
             .execute(pool)
             .await
+            .map(|result| result.rows_affected())
         }
 
         // pending -> failed (download) or available -> failed (metadata)
@@ -200,27 +219,25 @@ pub async fn transition(
             .bind(from.as_str())
             .execute(pool)
             .await
+            .map(|result| result.rows_affected())
         }
 
-        // available -> parsed (also resets index lifecycle to pending)
+        // available -> parsed (also requeues the record for indexing)
         HarvestEvent::MetadataExtracted { metadata } => {
-            sqlx::query(
+            let mut tx = pool.begin().await?;
+
+            let record_id = sqlx::query_scalar::<_, i64>(
                 r#"
             UPDATE oai_records
             SET status = $4,
                 metadata = $5,
                 message = '',
-                index_status = $6,
-                index_message = '',
-                index_attempts = 0,
-                indexed_at = NULL,
-                purged_at = NULL,
-                index_last_checked_at = NULL,
                 last_checked_at = NOW()
             WHERE endpoint = $1
               AND metadata_prefix = $2
               AND identifier = $3
-              AND status = $7
+              AND status = $6
+            RETURNING id
             "#,
             )
             .bind(&scope.endpoint)
@@ -228,10 +245,34 @@ pub async fn transition(
             .bind(identifier)
             .bind(OaiRecordStatus::Parsed.as_str())
             .bind(metadata)
-            .bind(OaiIndexStatus::Pending.as_str())
             .bind(OaiRecordStatus::Available.as_str())
-            .execute(pool)
-            .await
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            // Requeue for indexing: `* -> pending`. A full reset — a fresh
+            // parse invalidates any previous index state.
+            if let Some(record_id) = record_id {
+                sqlx::query(
+                    r#"
+                    INSERT INTO indexer_records (record_id, status)
+                    VALUES ($1, $2)
+                    ON CONFLICT (record_id) DO UPDATE SET
+                        status = $2,
+                        message = '',
+                        attempts = 0,
+                        indexed_at = NULL,
+                        purged_at = NULL,
+                        last_checked_at = NULL
+                    "#,
+                )
+                .bind(record_id)
+                .bind(OaiIndexStatus::Pending.as_str())
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            tx.commit().await?;
+            Ok(record_id.is_some() as u64)
         }
     }
 }

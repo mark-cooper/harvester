@@ -5,7 +5,7 @@ use harvester::{
     oai::{HarvestEvent, IndexEvent},
 };
 use support::{
-    DEFAULT_DATESTAMP, acquire_test_lock, fetch_record_snapshot, insert_record,
+    DEFAULT_DATESTAMP, acquire_test_lock, fetch_record_id, fetch_record_snapshot, insert_record,
     insert_record_with_index, metadata, scope, setup_test_pool,
 };
 
@@ -83,6 +83,75 @@ async fn harvest_events_produce_legal_transitions() -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Indexer row lifecycle: rows exist only once a record is parsed or deleted
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn metadata_success_creates_indexer_row() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+
+    insert_record(&pool, ENDPOINT, "lazy-row", DEFAULT_DATESTAMP, "available").await?;
+    let snap = fetch_record_snapshot(&pool, ENDPOINT, "lazy-row").await?;
+    assert_eq!(snap.index_status, None, "no indexer row before parse");
+
+    harvest_db::transition(
+        &pool,
+        &scope(ENDPOINT),
+        "lazy-row",
+        &HarvestEvent::MetadataExtracted {
+            metadata: metadata(REPOSITORY),
+        },
+    )
+    .await?;
+    let snap = fetch_record_snapshot(&pool, ENDPOINT, "lazy-row").await?;
+    assert_eq!(snap.status, "parsed");
+    assert_eq!(snap.index_status.as_deref(), Some("pending"));
+    assert_eq!(snap.index_attempts, Some(0));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn metadata_success_fully_resets_existing_indexer_row() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+
+    // A previously indexed record whose harvest went back to available.
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "reset-row",
+        DEFAULT_DATESTAMP,
+        "available",
+        "index_failed",
+        "old failure",
+        3,
+        metadata(REPOSITORY),
+    )
+    .await?;
+
+    harvest_db::transition(
+        &pool,
+        &scope(ENDPOINT),
+        "reset-row",
+        &HarvestEvent::MetadataExtracted {
+            metadata: metadata(REPOSITORY),
+        },
+    )
+    .await?;
+    let snap = fetch_record_snapshot(&pool, ENDPOINT, "reset-row").await?;
+    assert_eq!(snap.status, "parsed");
+    assert_eq!(snap.index_status.as_deref(), Some("pending"));
+    assert_eq!(snap.index_message.as_deref(), Some(""));
+    assert_eq!(snap.index_attempts, Some(0));
+    assert!(!snap.indexed_at_set);
+    assert!(!snap.purged_at_set);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Legal index transitions via Rust event functions
 // ---------------------------------------------------------------------------
 
@@ -104,15 +173,10 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
-    index_db::transition(
-        &pool,
-        &scope(ENDPOINT),
-        "idx-ok",
-        &IndexEvent::IndexSucceeded,
-    )
-    .await?;
+    let idx_ok = fetch_record_id(&pool, ENDPOINT, "idx-ok").await?;
+    index_db::transition(&pool, idx_ok, &IndexEvent::IndexSucceeded).await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "idx-ok").await?;
-    assert_eq!(snap.index_status, "indexed");
+    assert_eq!(snap.index_status.as_deref(), Some("indexed"));
 
     // IndexFailed: pending -> index_failed
     insert_record_with_index(
@@ -127,28 +191,22 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
+    let idx_fail = fetch_record_id(&pool, ENDPOINT, "idx-fail").await?;
     index_db::transition(
         &pool,
-        &scope(ENDPOINT),
-        "idx-fail",
+        idx_fail,
         &IndexEvent::IndexFailed {
             message: "traject error",
         },
     )
     .await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "idx-fail").await?;
-    assert_eq!(snap.index_status, "index_failed");
+    assert_eq!(snap.index_status.as_deref(), Some("index_failed"));
 
     // IndexSucceeded from index_failed: index_failed -> indexed
-    index_db::transition(
-        &pool,
-        &scope(ENDPOINT),
-        "idx-fail",
-        &IndexEvent::IndexSucceeded,
-    )
-    .await?;
+    index_db::transition(&pool, idx_fail, &IndexEvent::IndexSucceeded).await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "idx-fail").await?;
-    assert_eq!(snap.index_status, "indexed");
+    assert_eq!(snap.index_status.as_deref(), Some("indexed"));
 
     // PurgeSucceeded: pending -> purged
     insert_record_with_index(
@@ -163,15 +221,10 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
-    index_db::transition(
-        &pool,
-        &scope(ENDPOINT),
-        "purge-ok",
-        &IndexEvent::PurgeSucceeded,
-    )
-    .await?;
+    let purge_ok = fetch_record_id(&pool, ENDPOINT, "purge-ok").await?;
+    index_db::transition(&pool, purge_ok, &IndexEvent::PurgeSucceeded).await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "purge-ok").await?;
-    assert_eq!(snap.index_status, "purged");
+    assert_eq!(snap.index_status.as_deref(), Some("purged"));
 
     // PurgeFailed: pending -> purge_failed
     insert_record_with_index(
@@ -186,28 +239,22 @@ async fn index_events_produce_legal_transitions() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
+    let purge_fail = fetch_record_id(&pool, ENDPOINT, "purge-fail").await?;
     index_db::transition(
         &pool,
-        &scope(ENDPOINT),
-        "purge-fail",
+        purge_fail,
         &IndexEvent::PurgeFailed {
             message: "solr down",
         },
     )
     .await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "purge-fail").await?;
-    assert_eq!(snap.index_status, "purge_failed");
+    assert_eq!(snap.index_status.as_deref(), Some("purge_failed"));
 
     // PurgeSucceeded from purge_failed: purge_failed -> purged
-    index_db::transition(
-        &pool,
-        &scope(ENDPOINT),
-        "purge-fail",
-        &IndexEvent::PurgeSucceeded,
-    )
-    .await?;
+    index_db::transition(&pool, purge_fail, &IndexEvent::PurgeSucceeded).await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "purge-fail").await?;
-    assert_eq!(snap.index_status, "purged");
+    assert_eq!(snap.index_status.as_deref(), Some("purged"));
 
     Ok(())
 }
@@ -268,7 +315,7 @@ async fn wildcard_resets_are_allowed_by_triggers() -> anyhow::Result<()> {
     .await?;
     index_db::reindex(&pool, &scope(ENDPOINT), REPOSITORY).await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "indexed-to-pending").await?;
-    assert_eq!(snap.index_status, "pending");
+    assert_eq!(snap.index_status.as_deref(), Some("pending"));
 
     // Index wildcard: purged -> pending (metadata success resets index lifecycle)
     insert_record_with_index(
@@ -283,12 +330,13 @@ async fn wildcard_resets_are_allowed_by_triggers() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
-    sqlx::query("UPDATE oai_records SET index_status = 'pending' WHERE identifier = $1")
-        .bind("purged-to-pending")
+    let purged_to_pending = fetch_record_id(&pool, ENDPOINT, "purged-to-pending").await?;
+    sqlx::query("UPDATE indexer_records SET status = 'pending' WHERE record_id = $1")
+        .bind(purged_to_pending)
         .execute(&pool)
         .await?;
     let snap = fetch_record_snapshot(&pool, ENDPOINT, "purged-to-pending").await?;
-    assert_eq!(snap.index_status, "pending");
+    assert_eq!(snap.index_status.as_deref(), Some("pending"));
 
     Ok(())
 }
@@ -356,7 +404,7 @@ async fn illegal_status_transitions_are_rejected() -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Illegal index_status transitions rejected by trigger
+// Illegal index status transitions rejected by trigger
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -377,9 +425,10 @@ async fn illegal_index_status_transitions_are_rejected() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
+    let idx_to_fail = fetch_record_id(&pool, ENDPOINT, "idx-to-fail").await?;
     let result =
-        sqlx::query("UPDATE oai_records SET index_status = 'index_failed' WHERE identifier = $1")
-            .bind("idx-to-fail")
+        sqlx::query("UPDATE indexer_records SET status = 'index_failed' WHERE record_id = $1")
+            .bind(idx_to_fail)
             .execute(&pool)
             .await;
     let err = result.unwrap_err().to_string();
@@ -401,11 +450,11 @@ async fn illegal_index_status_transitions_are_rejected() -> anyhow::Result<()> {
         metadata(REPOSITORY),
     )
     .await?;
-    let result =
-        sqlx::query("UPDATE oai_records SET index_status = 'indexed' WHERE identifier = $1")
-            .bind("purged-to-idx")
-            .execute(&pool)
-            .await;
+    let purged_to_idx = fetch_record_id(&pool, ENDPOINT, "purged-to-idx").await?;
+    let result = sqlx::query("UPDATE indexer_records SET status = 'indexed' WHERE record_id = $1")
+        .bind(purged_to_idx)
+        .execute(&pool)
+        .await;
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("illegal index_status transition"),

@@ -56,9 +56,10 @@ status_enum! {
     /// - metadata: `available -> parsed|failed`
     /// - retry: `failed -> pending` (batch)
     ///
-    /// Index lifecycle ownership:
-    /// - metadata success also resets index lifecycle (`index_status -> pending`)
-    /// - import of deleted records also requeues index lifecycle (`index_status -> pending`)
+    /// Index lifecycle ownership (`indexer_records`):
+    /// - metadata success upserts the indexer row to `pending` (full reset)
+    /// - import of deleted records upserts the indexer row to `pending`
+    ///   (partial reset: `attempts` and `indexed_at` are preserved)
     pub enum OaiRecordStatus {
         Available => "available",
         Deleted   => "deleted",
@@ -69,7 +70,8 @@ status_enum! {
 }
 
 status_enum! {
-    /// Index lifecycle states for `oai_records.index_status`.
+    /// Index lifecycle states for `indexer_records.status`. A row exists only
+    /// once a record has index work or history (first parse or deletion).
     ///
     /// Expected transitions:
     /// - metadata success: `* -> pending` when a record becomes `parsed`

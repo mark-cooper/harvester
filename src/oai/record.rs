@@ -6,10 +6,11 @@ use tracing::warn;
 use super::status::OaiRecordStatus;
 
 /// A record row as fetched from the DB for download, parse, index, or delete
-/// work. Carries enough to locate the on-disk file (`fingerprint`) and dispatch
-/// the right action (`status`).
+/// work. Carries enough to locate the on-disk file (`fingerprint`), dispatch
+/// the right action (`status`), and key index transitions (`id`).
 #[derive(sqlx::FromRow)]
 pub struct OaiRecord {
+    pub id: i64,
     pub identifier: String,
     pub fingerprint: String,
     pub status: OaiRecordStatus,
