@@ -248,7 +248,10 @@ mod tests {
         let stderr = "I, [2026-07-07T03:16:33 #15]  INFO -- : executing\n\
                       E, [2026-07-07T03:16:34 #15] ERROR -- : could not index document";
         let filtered = strip_ruby_logger_noise(stderr);
-        assert_eq!(filtered, "E, [2026-07-07T03:16:34 #15] ERROR -- : could not index document");
+        assert_eq!(
+            filtered,
+            "E, [2026-07-07T03:16:34 #15] ERROR -- : could not index document"
+        );
     }
 
     #[test]

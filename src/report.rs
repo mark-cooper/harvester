@@ -42,7 +42,10 @@ pub async fn report(cfg: ReportArgs, pool: Pool<Postgres>) -> anyhow::Result<()>
         if missing.is_empty() {
             info!("Not seen in the OAI feed for {days}+ days: none");
         } else {
-            warn!("Not seen in the OAI feed for {days}+ days: {}", missing.len());
+            warn!(
+                "Not seen in the OAI feed for {days}+ days: {}",
+                missing.len()
+            );
             for identifier in &missing {
                 warn!("  {identifier}");
             }

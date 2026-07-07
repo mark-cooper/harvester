@@ -116,7 +116,10 @@ impl Harvester {
             processed: all.iter().map(|s| s.processed).sum(),
             failed: all.iter().map(|s| s.failed).sum(),
         };
-        info!("{label} {} records (failed: {})", total.processed, total.failed);
+        info!(
+            "{label} {} records (failed: {})",
+            total.processed, total.failed
+        );
         Ok(total)
     }
 

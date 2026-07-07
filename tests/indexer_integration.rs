@@ -190,7 +190,13 @@ async fn index_failure_marks_record_index_failed() -> anyhow::Result<()> {
     assert_eq!(snapshot.status, "parsed");
     assert_eq!(snapshot.index_status.as_deref(), Some("index_failed"));
     assert_eq!(snapshot.index_attempts, Some(1));
-    assert!(snapshot.index_message.as_deref().unwrap_or_default().contains("shim traject failure"));
+    assert!(
+        snapshot
+            .index_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("shim traject failure")
+    );
     assert!(!snapshot.indexed_at_set);
 
     Ok(())
@@ -265,7 +271,13 @@ async fn index_batch_mixed_results_continue_processing_remaining_records() -> an
     let failed = fetch_record_snapshot(&pool, ENDPOINT, "index-mixed-failure").await?;
     assert_eq!(failed.index_status.as_deref(), Some("index_failed"));
     assert_eq!(failed.index_attempts, Some(1));
-    assert!(failed.index_message.as_deref().unwrap_or_default().contains("shim targeted failure"));
+    assert!(
+        failed
+            .index_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("shim targeted failure")
+    );
     assert!(!failed.indexed_at_set);
 
     Ok(())
@@ -493,7 +505,13 @@ async fn delete_failure_marks_record_purge_failed() -> anyhow::Result<()> {
     assert_eq!(snapshot.status, "deleted");
     assert_eq!(snapshot.index_status.as_deref(), Some("purge_failed"));
     assert_eq!(snapshot.index_attempts, Some(1));
-    assert!(snapshot.index_message.as_deref().unwrap_or_default().contains("500"));
+    assert!(
+        snapshot
+            .index_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("500")
+    );
     assert!(!snapshot.purged_at_set);
 
     Ok(())
@@ -555,13 +573,25 @@ async fn delete_batch_failures_continue_processing_remaining_records() -> anyhow
     let first = fetch_record_snapshot(&pool, ENDPOINT, "delete-batch-fail-a").await?;
     assert_eq!(first.index_status.as_deref(), Some("purge_failed"));
     assert_eq!(first.index_attempts, Some(1));
-    assert!(first.index_message.as_deref().unwrap_or_default().contains("500"));
+    assert!(
+        first
+            .index_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("500")
+    );
     assert!(!first.purged_at_set);
 
     let second = fetch_record_snapshot(&pool, ENDPOINT, "delete-batch-fail-b").await?;
     assert_eq!(second.index_status.as_deref(), Some("purge_failed"));
     assert_eq!(second.index_attempts, Some(1));
-    assert!(second.index_message.as_deref().unwrap_or_default().contains("500"));
+    assert!(
+        second
+            .index_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("500")
+    );
     assert!(!second.purged_at_set);
 
     Ok(())
@@ -608,7 +638,12 @@ async fn preview_mode_has_no_side_effects() -> anyhow::Result<()> {
         "http://127.0.0.1:65535/solr/arclight".to_string(),
     );
     let indexer = ArcLightIndexer::new(config);
-    let runner = build_runner(indexer, pool.clone(), IndexRunOptions::standard(Some(5)), true);
+    let runner = build_runner(
+        indexer,
+        pool.clone(),
+        IndexRunOptions::standard(Some(5)),
+        true,
+    );
     runner.run().await?;
 
     let indexed = fetch_record_snapshot(&pool, ENDPOINT, "preview-index").await?;

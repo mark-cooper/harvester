@@ -103,7 +103,8 @@ impl<T: Indexer> IndexRunner<T> {
             deleted: stats.deleted,
             failed: stats.failed,
         };
-        if let Err(error) = runs::finish(&self.pool, run_id, outcome, &run_stats, &error_sample).await
+        if let Err(error) =
+            runs::finish(&self.pool, run_id, outcome, &run_stats, &error_sample).await
         {
             error!("Failed to record run {run_id}: {error}");
         }
@@ -114,9 +115,7 @@ impl<T: Indexer> IndexRunner<T> {
     async fn run_inner(&self, stats: &mut ProcessStats) -> anyhow::Result<()> {
         if !self.config.preview {
             self.indexer.preflight().await.map_err(|error| {
-                anyhow::anyhow!(
-                    "preflight failed, aborting run before consuming attempts: {error}"
-                )
+                anyhow::anyhow!("preflight failed, aborting run before consuming attempts: {error}")
             })?;
         }
 
@@ -219,10 +218,11 @@ impl<T: Indexer> IndexRunner<T> {
                 Err(e) => {
                     stats.failed += 1;
                     let message = truncate_middle(&e.to_string(), 1000, 500);
-                    error!("Failed to {action} record {}: {}", record.identifier, message);
-                    stats
-                        .first_error
-                        .get_or_insert_with(|| message.clone());
+                    error!(
+                        "Failed to {action} record {}: {}",
+                        record.identifier, message
+                    );
+                    stats.first_error.get_or_insert_with(|| message.clone());
                     let event = action.failure_event(&message);
                     let _ = self.update(record, &event).await;
                 }

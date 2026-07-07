@@ -172,7 +172,10 @@ async fn import_is_idempotent_for_same_data() -> anyhow::Result<()> {
     .bind(identifier)
     .fetch_one(&pool)
     .await?;
-    assert!(second_seen > first_seen, "last_seen_at advances on re-import");
+    assert!(
+        second_seen > first_seen,
+        "last_seen_at advances on re-import"
+    );
     Ok(())
 }
 

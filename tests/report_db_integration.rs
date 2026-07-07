@@ -2,8 +2,8 @@ mod support;
 
 use harvester::db::report::{not_seen_since, stale_in_index};
 use support::{
-    DEFAULT_DATESTAMP, acquire_test_lock, fetch_record_id, insert_record,
-    insert_record_with_index, metadata, scope, setup_test_pool,
+    DEFAULT_DATESTAMP, acquire_test_lock, fetch_record_id, insert_record, insert_record_with_index,
+    metadata, scope, setup_test_pool,
 };
 
 const ENDPOINT: &str = "https://report.example.org/oai";
@@ -56,7 +56,14 @@ async fn not_seen_since_reports_records_absent_from_the_feed() -> anyhow::Result
 
     insert_record(&pool, ENDPOINT, "vanished", DEFAULT_DATESTAMP, "parsed").await?;
     insert_record(&pool, ENDPOINT, "current", DEFAULT_DATESTAMP, "parsed").await?;
-    insert_record(&pool, ENDPOINT, "never-tracked", DEFAULT_DATESTAMP, "parsed").await?;
+    insert_record(
+        &pool,
+        ENDPOINT,
+        "never-tracked",
+        DEFAULT_DATESTAMP,
+        "parsed",
+    )
+    .await?;
     // Deleted records are expected to drop out of feeds: excluded.
     insert_record(&pool, ENDPOINT, "was-deleted", DEFAULT_DATESTAMP, "deleted").await?;
 
