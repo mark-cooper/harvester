@@ -168,7 +168,43 @@ impl ArcLightIndexer {
     }
 }
 
+/// Drop Ruby Logger info/debug banner lines (`I, [timestamp #pid]  INFO -- : ...`)
+/// so the first retained line of a traject failure is the exception itself,
+/// not boilerplate that survives truncation at the expense of the real error.
+fn strip_ruby_logger_noise(stderr: &str) -> String {
+    let filtered: Vec<&str> = stderr
+        .lines()
+        .filter(|line| !line.starts_with("I, [") && !line.starts_with("D, ["))
+        .collect();
+
+    if filtered.is_empty() {
+        stderr.to_string()
+    } else {
+        filtered.join("\n")
+    }
+}
+
 impl Indexer for ArcLightIndexer {
+    /// Solr reachability check. Any HTTP response counts as reachable — a
+    /// Solr that answers with an error status still gets accurate per-record
+    /// handling; only connection failures and timeouts abort the run.
+    fn preflight<'a>(&'a self) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            let url = format!("{}/admin/ping", self.config.solr_url.trim_end_matches('/'));
+            match timeout(self.timeout_duration(), self.client.get(&url).send()).await {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(error)) => {
+                    anyhow::bail!("Solr is unreachable at {}: {}", self.config.solr_url, error)
+                }
+                Err(_) => anyhow::bail!(
+                    "Solr ping timed out after {}s at {}",
+                    self.config.record_timeout_seconds,
+                    self.config.solr_url
+                ),
+            }
+        })
+    }
+
     fn index_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             // Delete existing root + nested children first to avoid orphaned
@@ -181,12 +217,43 @@ impl Indexer for ArcLightIndexer {
                 Ok(())
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("traject failed: {}", stderr);
+                anyhow::bail!("traject failed: {}", strip_ruby_logger_noise(&stderr));
             }
         })
     }
 
     fn delete_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move { self.solr_delete_by_root(&record.fingerprint, false).await })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_ruby_logger_noise;
+
+    #[test]
+    fn drops_info_and_debug_banner_lines() {
+        let stderr = "I, [2026-07-07T03:16:33 #15]  INFO -- : traject (3.8.3) executing\n\
+                      D, [2026-07-07T03:16:33 #15] DEBUG -- : loading config\n\
+                      /usr/local/lib/ruby/gems/foo.rb:1:in 'x': uninitialized constant Foo (NameError)\n\
+                      \tfrom /usr/local/bundle/bin/traject:25:in '<main>'";
+        let filtered = strip_ruby_logger_noise(stderr);
+        assert!(filtered.starts_with("/usr/local/lib/ruby/gems/foo.rb"));
+        assert!(filtered.contains("NameError"));
+        assert!(!filtered.contains("INFO"));
+    }
+
+    #[test]
+    fn keeps_warning_and_error_logger_lines() {
+        let stderr = "I, [2026-07-07T03:16:33 #15]  INFO -- : executing\n\
+                      E, [2026-07-07T03:16:34 #15] ERROR -- : could not index document";
+        let filtered = strip_ruby_logger_noise(stderr);
+        assert_eq!(filtered, "E, [2026-07-07T03:16:34 #15] ERROR -- : could not index document");
+    }
+
+    #[test]
+    fn falls_back_to_original_when_everything_is_noise() {
+        let stderr = "I, [2026-07-07T03:16:33 #15]  INFO -- : only info here";
+        assert_eq!(strip_ruby_logger_noise(stderr), stderr);
     }
 }

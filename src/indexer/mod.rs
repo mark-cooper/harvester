@@ -1,7 +1,7 @@
 pub mod arclight;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use futures::{StreamExt, future::BoxFuture, stream};
 use sqlx::PgPool;
@@ -10,12 +10,29 @@ use tracing::{error, info, warn};
 use crate::{
     OaiRecord, batch,
     db::indexer::{FetchIndexCandidatesParams, fetch, repository_exists, transition},
+    db::runs::{self, RunStats},
     oai::{IndexEvent, OaiScope, RecordAction},
 };
 
 const CONCURRENCY: usize = 10;
 
+/// Default attempts budget for failed records in standard runs. Records
+/// at/above this many failed attempts are quarantined until `--retry` or
+/// `--reindex`.
+pub const DEFAULT_MAX_INDEX_ATTEMPTS: i32 = 5;
+
+/// Abort the run once this many records have failed with no success in
+/// between. Catches environment-wide breakage (dead Solr, broken traject)
+/// before it burns an attempt on the whole corpus.
+const CIRCUIT_BREAKER_THRESHOLD: usize = 100;
+
 pub trait Indexer: Sync {
+    /// Cheap environment check run once before the first record. Failing here
+    /// aborts the run without consuming any record's attempt budget.
+    fn preflight<'a>(&'a self) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn index_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>>;
     fn delete_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>>;
 }
@@ -32,6 +49,7 @@ pub struct IndexRunner<T: Indexer> {
     config: IndexRunnerConfig,
     pool: PgPool,
     shutdown: Arc<AtomicBool>,
+    consecutive_failures: AtomicUsize,
 }
 
 impl<T: Indexer> IndexRunner<T> {
@@ -46,6 +64,7 @@ impl<T: Indexer> IndexRunner<T> {
             config,
             pool,
             shutdown,
+            consecutive_failures: AtomicUsize::new(0),
         }
     }
 
@@ -53,7 +72,54 @@ impl<T: Indexer> IndexRunner<T> {
         self.shutdown.load(Ordering::Relaxed)
     }
 
+    fn breaker_tripped(&self) -> bool {
+        self.consecutive_failures.load(Ordering::Relaxed) >= CIRCUIT_BREAKER_THRESHOLD
+    }
+
     pub async fn run(&self) -> anyhow::Result<()> {
+        let run_id = runs::start(
+            &self.pool,
+            runs::KIND_INDEX,
+            &self.config.scope,
+            &self.config.source_repository,
+        )
+        .await?;
+
+        let mut stats = ProcessStats::default();
+        let result = self.run_inner(&mut stats).await;
+
+        let outcome = match &result {
+            Ok(()) => runs::OUTCOME_COMPLETED,
+            Err(_) => runs::OUTCOME_FAILED,
+        };
+        let error_sample = match (&stats.first_error, &result) {
+            (Some(message), _) => truncate_middle(message, 200, 200),
+            (None, Err(error)) => truncate_middle(&error.to_string(), 200, 200),
+            (None, Ok(())) => String::new(),
+        };
+        let run_stats = RunStats {
+            processed: stats.indexed + stats.deleted + stats.failed,
+            imported: stats.indexed,
+            deleted: stats.deleted,
+            failed: stats.failed,
+        };
+        if let Err(error) = runs::finish(&self.pool, run_id, outcome, &run_stats, &error_sample).await
+        {
+            error!("Failed to record run {run_id}: {error}");
+        }
+
+        result
+    }
+
+    async fn run_inner(&self, stats: &mut ProcessStats) -> anyhow::Result<()> {
+        if !self.config.preview {
+            self.indexer.preflight().await.map_err(|error| {
+                anyhow::anyhow!(
+                    "preflight failed, aborting run before consuming attempts: {error}"
+                )
+            })?;
+        }
+
         if !repository_exists(&self.pool, &self.config.source_repository).await? {
             warn!(
                 "No matching repository was found for: {}",
@@ -62,11 +128,18 @@ impl<T: Indexer> IndexRunner<T> {
             return Ok(());
         }
 
-        let stats = self.process_records().await?;
+        *stats = self.process_records().await?;
 
         info!("Indexed records: {}", stats.indexed);
         info!("Deleted records: {}", stats.deleted);
         info!("Failed index operations: {}", stats.failed);
+
+        if self.breaker_tripped() {
+            anyhow::bail!(
+                "circuit breaker: aborted after {} consecutive failures (environment problem?)",
+                self.consecutive_failures.load(Ordering::Relaxed)
+            );
+        }
 
         if stats.failed > 0 {
             anyhow::bail!("index run completed with {} failed record(s)", stats.failed);
@@ -83,14 +156,20 @@ impl<T: Indexer> IndexRunner<T> {
         )
         .await?;
 
-        Ok(ProcessStats {
-            indexed: all.iter().map(|s| s.indexed).sum(),
-            deleted: all.iter().map(|s| s.deleted).sum(),
-            failed: all.iter().map(|s| s.failed).sum(),
-        })
+        let mut total = ProcessStats::default();
+        for stats in all {
+            total.merge(stats);
+        }
+        Ok(total)
     }
 
     async fn fetch_batch(&self, last_identifier: Option<&str>) -> anyhow::Result<Vec<OaiRecord>> {
+        // Stop paginating once the breaker trips; run_inner turns this into a
+        // run-level error after stats are reported.
+        if self.breaker_tripped() {
+            return Ok(Vec::new());
+        }
+
         let params = FetchIndexCandidatesParams {
             scope: &self.config.scope,
             source_repository: &self.config.source_repository,
@@ -139,12 +218,24 @@ impl<T: Indexer> IndexRunner<T> {
                 }
                 Err(e) => {
                     stats.failed += 1;
-                    let message = truncate_middle(&e.to_string(), 200, 200);
-                    error!("Failed to process: {}", message);
+                    let message = truncate_middle(&e.to_string(), 1000, 500);
+                    error!("Failed to {action} record {}: {}", record.identifier, message);
+                    stats
+                        .first_error
+                        .get_or_insert_with(|| message.clone());
                     let event = action.failure_event(&message);
                     let _ = self.update(record, &event).await;
                 }
             }
+        }
+
+        // Batches processed concurrently have no meaningful intra-batch order:
+        // count a fully-failed batch as consecutive, any success resets.
+        if stats.failed > 0 && stats.indexed == 0 && stats.deleted == 0 {
+            self.consecutive_failures
+                .fetch_add(stats.failed, Ordering::Relaxed);
+        } else {
+            self.consecutive_failures.store(0, Ordering::Relaxed);
         }
 
         stats
@@ -152,8 +243,22 @@ impl<T: Indexer> IndexRunner<T> {
 
     async fn update(&self, record: &OaiRecord, event: &IndexEvent<'_>) -> anyhow::Result<bool> {
         match transition(&self.pool, record.id, event).await {
-            Ok(rows_affected) => Ok(rows_affected > 0),
-            Err(_) => Ok(false),
+            Ok(rows_affected) => {
+                if rows_affected == 0 {
+                    warn!(
+                        "index transition for {} did not apply (stale state?): {:?}",
+                        record.identifier, event
+                    );
+                }
+                Ok(rows_affected > 0)
+            }
+            Err(error) => {
+                error!(
+                    "index transition for {} failed: {error} ({:?})",
+                    record.identifier, event
+                );
+                Ok(false)
+            }
         }
     }
 }
@@ -174,11 +279,13 @@ impl IndexRunOptions {
         }
     }
 
-    pub fn pending_only() -> Self {
+    /// Standard run: pending records plus failed records under the attempts
+    /// budget (`None` = unlimited retries).
+    pub fn standard(max_attempts: Option<i32>) -> Self {
         Self {
-            selection_mode: IndexSelectionMode::PendingOnly,
+            selection_mode: IndexSelectionMode::Standard,
             message_filter: None,
-            max_attempts: None,
+            max_attempts,
         }
     }
 }
@@ -186,7 +293,7 @@ impl IndexRunOptions {
 #[derive(Debug, Clone, Copy)]
 pub enum IndexSelectionMode {
     FailedOnly,
-    PendingOnly,
+    Standard,
 }
 
 #[derive(Default)]
@@ -194,6 +301,7 @@ struct ProcessStats {
     indexed: usize,
     deleted: usize,
     failed: usize,
+    first_error: Option<String>,
 }
 
 impl ProcessStats {
@@ -201,6 +309,15 @@ impl ProcessStats {
         match action {
             RecordAction::Index => self.indexed += 1,
             RecordAction::Delete => self.deleted += 1,
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.indexed += other.indexed;
+        self.deleted += other.deleted;
+        self.failed += other.failed;
+        if self.first_error.is_none() {
+            self.first_error = other.first_error;
         }
     }
 }

@@ -3,6 +3,7 @@ pub mod db;
 mod harvester;
 mod indexer;
 pub mod oai;
+mod report;
 mod summarizer;
 use std::path::{Path, PathBuf};
 
@@ -13,8 +14,11 @@ pub use indexer::arclight::cli::{ArcLightArgs, index};
 pub use indexer::arclight::config::{
     ARCLIGHT_METADATA_PREFIX, ArcLightIndexerConfig, build_config as build_arclight_config,
 };
-pub use indexer::{IndexRunOptions, IndexRunner, IndexRunnerConfig, IndexSelectionMode};
+pub use indexer::{
+    DEFAULT_MAX_INDEX_ATTEMPTS, IndexRunOptions, IndexRunner, IndexRunnerConfig, IndexSelectionMode,
+};
 pub use oai::{OaiConfig, OaiRecord, OaiScope};
+pub use report::{ReportArgs, report};
 
 pub fn expand_path(path: &Path) -> PathBuf {
     PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref())

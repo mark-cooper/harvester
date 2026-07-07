@@ -13,13 +13,13 @@ use oai_pmh::{Client, ListIdentifiersArgs};
 
 const BATCH_SIZE: usize = 100;
 
-pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
+pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<ImportStats> {
     let total = process(harvester).await?;
     info!(
         "Imported {} records (active: {}, deleted: {})",
         total.processed, total.imported, total.deleted
     );
-    Ok(())
+    Ok(total)
 }
 
 async fn process(harvester: &Harvester) -> anyhow::Result<ImportStats> {

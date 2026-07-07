@@ -41,11 +41,23 @@ pub struct RecordSnapshot {
     pub datestamp: String,
     pub version: i32,
     pub metadata: serde_json::Value,
+    pub last_seen_at_set: bool,
     pub index_status: Option<String>,
     pub index_message: Option<String>,
     pub index_attempts: Option<i32>,
     pub indexed_at_set: bool,
     pub purged_at_set: bool,
+}
+
+pub struct RunSnapshot {
+    pub kind: String,
+    pub outcome: String,
+    pub processed: i32,
+    pub imported: i32,
+    pub deleted: i32,
+    pub failed: i32,
+    pub error_sample: String,
+    pub finished_at_set: bool,
 }
 
 #[derive(Clone)]
@@ -269,6 +281,7 @@ pub async fn fetch_record_snapshot(
     let row = sqlx::query(
         r#"
         SELECT r.status, r.message, r.datestamp, r.version, r.metadata,
+               r.last_seen_at IS NOT NULL AS last_seen_at_set,
                i.status AS index_status,
                i.message AS index_message,
                i.attempts AS index_attempts,
@@ -291,11 +304,39 @@ pub async fn fetch_record_snapshot(
         datestamp: row.try_get("datestamp")?,
         version: row.try_get("version")?,
         metadata: row.try_get("metadata")?,
+        last_seen_at_set: row.try_get("last_seen_at_set")?,
         index_status: row.try_get("index_status")?,
         index_message: row.try_get("index_message")?,
         index_attempts: row.try_get("index_attempts")?,
         indexed_at_set: row.try_get("indexed_at_set")?,
         purged_at_set: row.try_get("purged_at_set")?,
+    })
+}
+
+pub async fn fetch_latest_run(pool: &PgPool, endpoint: &str) -> anyhow::Result<RunSnapshot> {
+    let row = sqlx::query(
+        r#"
+        SELECT kind, outcome, processed, imported, deleted, failed, error_sample,
+               finished_at IS NOT NULL AS finished_at_set
+        FROM runs
+        WHERE endpoint = $1
+        ORDER BY id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(endpoint)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(RunSnapshot {
+        kind: row.try_get("kind")?,
+        outcome: row.try_get("outcome")?,
+        processed: row.try_get("processed")?,
+        imported: row.try_get("imported")?,
+        deleted: row.try_get("deleted")?,
+        failed: row.try_get("failed")?,
+        error_sample: row.try_get("error_sample")?,
+        finished_at_set: row.try_get("finished_at_set")?,
     })
 }
 

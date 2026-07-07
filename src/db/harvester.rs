@@ -79,6 +79,24 @@ pub(crate) async fn batch_upsert_records(
         requeue_deleted_for_purge(&mut tx, &deleted_ids).await?;
     }
 
+    // Every header in the batch was seen in the feed, including unchanged
+    // records the upsert skipped — this is what makes orphan detection
+    // (records that silently vanish from the feed) possible.
+    sqlx::query(
+        r#"
+        UPDATE oai_records
+        SET last_seen_at = NOW()
+        WHERE endpoint = $1
+          AND metadata_prefix = $2
+          AND identifier = ANY($3::text[])
+        "#,
+    )
+    .bind(&scope.endpoint)
+    .bind(&scope.metadata_prefix)
+    .bind(&identifiers)
+    .execute(&mut *tx)
+    .await?;
+
     tx.commit().await?;
 
     let deleted = deleted_ids.len();
@@ -173,9 +191,8 @@ pub async fn transition(
 ) -> Result<u64, Error> {
     match event {
         // pending -> available
-        HarvestEvent::DownloadSucceeded => {
-            sqlx::query(
-                r#"
+        HarvestEvent::DownloadSucceeded => sqlx::query(
+            r#"
             UPDATE oai_records
             SET status = $4, message = '', last_checked_at = NOW()
             WHERE endpoint = $1
@@ -183,16 +200,15 @@ pub async fn transition(
               AND identifier = $3
               AND status = $5
             "#,
-            )
-            .bind(&scope.endpoint)
-            .bind(&scope.metadata_prefix)
-            .bind(identifier)
-            .bind(OaiRecordStatus::Available.as_str())
-            .bind(OaiRecordStatus::Pending.as_str())
-            .execute(pool)
-            .await
-            .map(|result| result.rows_affected())
-        }
+        )
+        .bind(&scope.endpoint)
+        .bind(&scope.metadata_prefix)
+        .bind(identifier)
+        .bind(OaiRecordStatus::Available.as_str())
+        .bind(OaiRecordStatus::Pending.as_str())
+        .execute(pool)
+        .await
+        .map(|result| result.rows_affected()),
 
         // pending -> failed (download) or available -> failed (metadata)
         HarvestEvent::DownloadFailed { message } | HarvestEvent::MetadataFailed { message } => {

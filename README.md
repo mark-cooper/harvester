@@ -42,7 +42,12 @@ cargo run -- index arclight \
 This uses a range of default values so will only work if your setup is aligned.
 For all options run: `cargo run -- index arclight --help`.
 
-Retry failed index operations for a specific endpoint/repository pair:
+Standard runs process pending records and automatically retry failed records
+under the attempts budget (default 5; override with `--max-attempts`). Records
+at/above the budget are quarantined until `--retry` or `--reindex`.
+
+Retry failed index operations for a specific endpoint/repository pair
+(unlimited attempts unless `--max-attempts` is passed):
 
 ```bash
 cargo run -- index arclight \
@@ -64,6 +69,24 @@ cargo run -- index arclight \
     --reindex
 ```
 
+
+### Health reports
+
+Report records serving stale index content (indexed in Solr but latest harvest
+failed) and, optionally, records that have dropped out of the OAI feed without
+a delete notice:
+
+```bash
+cargo run -- report -m oai_ead --not-seen-days 7 https://test.archivesspace.org/oai
+```
+
+Run history (one row per harvest/index run, with counts and an error sample)
+is recorded in the `runs` table:
+
+```sql
+SELECT kind, outcome, started_at, processed, failed, error_sample
+FROM runs ORDER BY id DESC LIMIT 10;
+```
 
 ### Rules for metadata extraction
 

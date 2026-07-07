@@ -1,5 +1,7 @@
 pub mod harvester;
 pub mod indexer;
+pub mod report;
+pub mod runs;
 mod summarizer;
 
 use sqlx::PgPool;

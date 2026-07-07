@@ -15,8 +15,8 @@ use harvester::{
 };
 use support::{
     DEFAULT_DATESTAMP, acquire_test_lock, create_temp_dir, create_temp_file, create_traject_shim,
-    fetch_fingerprint, fetch_record_snapshot, insert_record_with_index, metadata, setup_test_pool,
-    start_mock_solr_server,
+    fetch_fingerprint, fetch_latest_run, fetch_record_snapshot, insert_record_with_index, metadata,
+    setup_test_pool, start_mock_solr_server,
 };
 
 const ENDPOINT: &str = "https://indexer.example.org/oai";
@@ -126,7 +126,7 @@ async fn index_success_marks_record_indexed() -> anyhow::Result<()> {
     let runner = build_runner(
         indexer,
         pool.clone(),
-        IndexRunOptions::pending_only(),
+        IndexRunOptions::standard(Some(5)),
         false,
     );
     runner.run().await?;
@@ -180,7 +180,7 @@ async fn index_failure_marks_record_index_failed() -> anyhow::Result<()> {
     let runner = build_runner(
         indexer,
         pool.clone(),
-        IndexRunOptions::pending_only(),
+        IndexRunOptions::standard(Some(5)),
         false,
     );
     let result = runner.run().await;
@@ -248,7 +248,7 @@ async fn index_batch_mixed_results_continue_processing_remaining_records() -> an
     let runner = build_runner(
         indexer,
         pool.clone(),
-        IndexRunOptions::pending_only(),
+        IndexRunOptions::standard(Some(5)),
         false,
     );
     let result = runner.run().await;
@@ -304,7 +304,7 @@ async fn delete_success_marks_record_purged() -> anyhow::Result<()> {
     let runner = build_runner(
         indexer,
         pool.clone(),
-        IndexRunOptions::pending_only(),
+        IndexRunOptions::standard(Some(5)),
         false,
     );
     runner.run().await?;
@@ -314,6 +314,138 @@ async fn delete_success_marks_record_purged() -> anyhow::Result<()> {
     assert_eq!(snapshot.index_status.as_deref(), Some("purged"));
     assert_eq!(snapshot.index_message.as_deref(), Some(""));
     assert!(snapshot.purged_at_set);
+
+    let run = fetch_latest_run(&pool, ENDPOINT).await?;
+    assert_eq!(run.kind, "index");
+    assert_eq!(run.outcome, "completed");
+    assert_eq!(run.deleted, 1);
+    assert_eq!(run.failed, 0);
+    assert_eq!(run.error_sample, "");
+    assert!(run.finished_at_set);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn preflight_aborts_run_when_solr_is_unreachable() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "preflight-unreachable",
+        DEFAULT_DATESTAMP,
+        "deleted",
+        "pending",
+        "",
+        0,
+        metadata(REPOSITORY),
+    )
+    .await?;
+
+    let configuration = create_temp_file("preflight-config")?;
+    let data_dir = create_temp_dir("preflight-data")?;
+    let repository_file = create_temp_file("preflight-repo-file")?;
+
+    let config = build_config(
+        configuration,
+        data_dir,
+        repository_file,
+        // Unroutable: connection is refused, so preflight fails fast.
+        "http://127.0.0.1:9/solr/arclight".to_string(),
+    );
+    let indexer = ArcLightIndexer::new(config);
+    let runner = build_runner(
+        indexer,
+        pool.clone(),
+        IndexRunOptions::standard(Some(5)),
+        false,
+    );
+    let result = runner.run().await;
+    let message = result.unwrap_err().to_string();
+    assert!(
+        message.contains("preflight failed"),
+        "expected preflight error, got: {message}"
+    );
+
+    // No attempt was consumed.
+    let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "preflight-unreachable").await?;
+    assert_eq!(snapshot.index_status.as_deref(), Some("pending"));
+    assert_eq!(snapshot.index_attempts, Some(0));
+
+    let run = fetch_latest_run(&pool, ENDPOINT).await?;
+    assert_eq!(run.outcome, "failed");
+    assert!(run.error_sample.contains("preflight failed"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn circuit_breaker_aborts_run_after_mass_failure() -> anyhow::Result<()> {
+    let _guard = acquire_test_lock().await;
+    let pool = setup_test_pool().await?;
+
+    // 150 purge candidates against a Solr that errors on every call: the
+    // first full batch (100) fails, trips the breaker, and the remaining 50
+    // keep their pending state with no attempt consumed.
+    for n in 0..150 {
+        insert_record_with_index(
+            &pool,
+            ENDPOINT,
+            &format!("breaker-{n:03}"),
+            DEFAULT_DATESTAMP,
+            "deleted",
+            "pending",
+            "",
+            0,
+            metadata(REPOSITORY),
+        )
+        .await?;
+    }
+
+    let solr = start_mock_solr_server(500, r#"{"error":"boom"}"#).await?;
+    let configuration = create_temp_file("breaker-config")?;
+    let data_dir = create_temp_dir("breaker-data")?;
+    let repository_file = create_temp_file("breaker-repo-file")?;
+
+    let config = build_config(
+        configuration,
+        data_dir,
+        repository_file,
+        solr.solr_url.clone(),
+    );
+    let indexer = ArcLightIndexer::new(config);
+    let runner = build_runner(
+        indexer,
+        pool.clone(),
+        IndexRunOptions::standard(Some(5)),
+        false,
+    );
+    let result = runner.run().await;
+    let message = result.unwrap_err().to_string();
+    assert!(
+        message.contains("circuit breaker"),
+        "expected circuit breaker error, got: {message}"
+    );
+
+    let failed = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM indexer_records WHERE status = 'purge_failed'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    let pending = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM indexer_records WHERE status = 'pending'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(failed, 100, "exactly one full batch consumed attempts");
+    assert_eq!(pending, 50, "records after the trip were not attempted");
+
+    let run = fetch_latest_run(&pool, ENDPOINT).await?;
+    assert_eq!(run.outcome, "failed");
+    assert_eq!(run.failed, 100);
+    assert!(!run.error_sample.is_empty());
 
     Ok(())
 }
@@ -351,7 +483,7 @@ async fn delete_failure_marks_record_purge_failed() -> anyhow::Result<()> {
     let runner = build_runner(
         indexer,
         pool.clone(),
-        IndexRunOptions::pending_only(),
+        IndexRunOptions::standard(Some(5)),
         false,
     );
     let result = runner.run().await;
@@ -412,7 +544,7 @@ async fn delete_batch_failures_continue_processing_remaining_records() -> anyhow
     let runner = build_runner(
         indexer,
         pool.clone(),
-        IndexRunOptions::pending_only(),
+        IndexRunOptions::standard(Some(5)),
         false,
     );
     let result = runner.run().await;
@@ -476,7 +608,7 @@ async fn preview_mode_has_no_side_effects() -> anyhow::Result<()> {
         "http://127.0.0.1:65535/solr/arclight".to_string(),
     );
     let indexer = ArcLightIndexer::new(config);
-    let runner = build_runner(indexer, pool.clone(), IndexRunOptions::pending_only(), true);
+    let runner = build_runner(indexer, pool.clone(), IndexRunOptions::standard(Some(5)), true);
     runner.run().await?;
 
     let indexed = fetch_record_snapshot(&pool, ENDPOINT, "preview-index").await?;

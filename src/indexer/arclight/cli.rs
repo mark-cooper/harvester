@@ -50,7 +50,8 @@ pub struct ArcLightArgs {
     pub message_filter: Option<String>,
 
     /// Skip failed records at/above this attempt count
-    #[arg(long, requires = "retry")]
+    /// [default: 5 for standard runs; unlimited with --retry]
+    #[arg(long)]
     pub max_attempts: Option<i32>,
 
     /// Solr url
@@ -93,9 +94,13 @@ pub async fn index(
     }
 
     let run_options = if cfg.retry {
+        // Escape hatch: unlimited attempts unless explicitly capped.
         IndexRunOptions::failed_only(cfg.message_filter.clone(), cfg.max_attempts)
     } else {
-        IndexRunOptions::pending_only()
+        IndexRunOptions::standard(Some(
+            cfg.max_attempts
+                .unwrap_or(crate::indexer::DEFAULT_MAX_INDEX_ATTEMPTS),
+        ))
     };
 
     let source_repository = cfg.source_repository.clone();

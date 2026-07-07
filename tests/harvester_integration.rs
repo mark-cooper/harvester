@@ -6,8 +6,8 @@ use harvester::{OaiRecord, OaiScope, db::harvester::retry, oai::OaiRecordStatus}
 use support::{
     DEFAULT_DATESTAMP, EAD_XML, GetRecordSpec, MockOaiConfig, acquire_test_lock,
     count_records_for_identifier, create_rules_file, create_temp_dir, create_temp_file,
-    fetch_fingerprint, fetch_record_id, fetch_record_snapshot, header_spec, insert_record,
-    insert_record_with_index, run_harvest, setup_test_pool, start_mock_oai_server,
+    fetch_fingerprint, fetch_latest_run, fetch_record_id, fetch_record_snapshot, header_spec,
+    insert_record, insert_record_with_index, run_harvest, setup_test_pool, start_mock_oai_server,
 };
 
 #[tokio::test]
@@ -38,6 +38,15 @@ async fn run_without_rules_leaves_records_available() -> anyhow::Result<()> {
         snapshot.index_status, None,
         "no indexer row until parsed or deleted"
     );
+    assert!(snapshot.last_seen_at_set, "import records feed presence");
+
+    let run = fetch_latest_run(&pool, &server.endpoint).await?;
+    assert_eq!(run.kind, "harvest");
+    assert_eq!(run.outcome, "completed");
+    assert_eq!(run.processed, 1);
+    assert_eq!(run.imported, 1);
+    assert_eq!(run.failed, 0);
+    assert!(run.finished_at_set);
 
     let fingerprint = fetch_fingerprint(&pool, &server.endpoint, identifier).await?;
     let record = OaiRecord {
@@ -140,6 +149,13 @@ async fn import_is_idempotent_for_same_data() -> anyhow::Result<()> {
     .await?;
 
     run_harvest(&pool, &server.endpoint, data_dir.clone(), None).await?;
+    let first_seen = sqlx::query_scalar::<_, f64>(
+        "SELECT EXTRACT(EPOCH FROM last_seen_at)::float8 FROM oai_records WHERE identifier = $1",
+    )
+    .bind(identifier)
+    .fetch_one(&pool)
+    .await?;
+
     run_harvest(&pool, &server.endpoint, data_dir, None).await?;
 
     let count = count_records_for_identifier(&pool, &server.endpoint, identifier).await?;
@@ -148,6 +164,15 @@ async fn import_is_idempotent_for_same_data() -> anyhow::Result<()> {
     let snapshot = fetch_record_snapshot(&pool, &server.endpoint, identifier).await?;
     assert_eq!(snapshot.status, "available");
     assert_eq!(snapshot.version, 1);
+
+    // The upsert skips unchanged records, but feed presence still advances.
+    let second_seen = sqlx::query_scalar::<_, f64>(
+        "SELECT EXTRACT(EPOCH FROM last_seen_at)::float8 FROM oai_records WHERE identifier = $1",
+    )
+    .bind(identifier)
+    .fetch_one(&pool)
+    .await?;
+    assert!(second_seen > first_seen, "last_seen_at advances on re-import");
     Ok(())
 }
 

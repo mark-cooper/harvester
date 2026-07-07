@@ -13,7 +13,7 @@ use crate::oai::{HarvestEvent, OaiRecord, OaiRecordStatus};
 
 use super::Harvester;
 
-pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<()> {
+pub(super) async fn run(harvester: &Harvester) -> anyhow::Result<super::BatchStats> {
     let client = Client::new(&harvester.config.scope.endpoint)?;
     harvester
         .batched(OaiRecordStatus::Pending, "Downloaded", async |batch| {

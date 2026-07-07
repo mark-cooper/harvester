@@ -15,7 +15,7 @@ use crate::{
 
 use super::Harvester;
 
-pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result<()> {
+pub(super) async fn run(harvester: &Harvester, rules: PathBuf) -> anyhow::Result<super::BatchStats> {
     let rules = RuleSet::load(File::open(rules)?)?;
     harvester
         .batched(

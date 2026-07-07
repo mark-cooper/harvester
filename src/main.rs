@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand};
-use harvester::{ArcLightArgs, HarvesterArgs, db};
+use harvester::{ArcLightArgs, HarvesterArgs, ReportArgs, db};
 use tracing::info;
 
 /// OAI-PMH harvester
@@ -31,6 +31,10 @@ enum Commands {
     /// Index records into a target system
     #[command(subcommand)]
     Index(IndexCommands),
+
+    /// Health reports (stale index entries, records missing from the feed)
+    #[command(arg_required_else_help = true)]
+    Report(ReportArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -70,6 +74,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Index(IndexCommands::ArcLight(cfg)) => {
             harvester::index(cfg, pool, shutdown).await?;
+        }
+        Commands::Report(cfg) => {
+            harvester::report(cfg, pool).await?;
         }
     }
 

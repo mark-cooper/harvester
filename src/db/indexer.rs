@@ -19,44 +19,79 @@ pub async fn fetch(
     pool: &PgPool,
     params: FetchIndexCandidatesParams<'_>,
 ) -> Result<Vec<OaiRecord>, Error> {
-    let (parsed_index_status, deleted_index_status) = match params.selection_mode {
-        IndexSelectionMode::PendingOnly => (OaiIndexStatus::Pending, OaiIndexStatus::Pending),
-        IndexSelectionMode::FailedOnly => {
-            (OaiIndexStatus::IndexFailed, OaiIndexStatus::PurgeFailed)
+    match params.selection_mode {
+        // Pending rows are always eligible; failed rows only while under the
+        // attempts budget (a NULL budget means unlimited retries).
+        IndexSelectionMode::Standard => {
+            sqlx::query_as::<_, OaiRecord>(
+                r#"
+                SELECT r.id, r.identifier, r.fingerprint, r.status
+                FROM oai_records r
+                JOIN indexer_records i ON i.record_id = r.id
+                WHERE r.endpoint = $1
+                  AND r.metadata_prefix = $2
+                  AND (
+                        (r.status = $3 AND (i.status = $4 OR (i.status = $5 AND ($9::INT IS NULL OR i.attempts < $9))))
+                     OR (r.status = $6 AND (i.status = $4 OR (i.status = $7 AND ($9::INT IS NULL OR i.attempts < $9))))
+                  )
+                  AND r.metadata->'repository' ? $8
+                  AND ($10::TEXT IS NULL OR r.identifier > $10)
+                  AND ($11::TEXT IS NULL OR i.message ILIKE ('%' || $11 || '%'))
+                ORDER BY r.identifier
+                LIMIT 100
+                "#,
+            )
+            .bind(&params.scope.endpoint)
+            .bind(&params.scope.metadata_prefix)
+            .bind(OaiRecordStatus::Parsed.as_str())
+            .bind(OaiIndexStatus::Pending.as_str())
+            .bind(OaiIndexStatus::IndexFailed.as_str())
+            .bind(OaiRecordStatus::Deleted.as_str())
+            .bind(OaiIndexStatus::PurgeFailed.as_str())
+            .bind(params.source_repository)
+            .bind(params.max_attempts)
+            .bind(params.last_identifier)
+            .bind(params.message_filter)
+            .fetch_all(pool)
+            .await
         }
-    };
 
-    sqlx::query_as::<_, OaiRecord>(
-        r#"
-        SELECT r.id, r.identifier, r.fingerprint, r.status
-        FROM oai_records r
-        JOIN indexer_records i ON i.record_id = r.id
-        WHERE r.endpoint = $1
-          AND r.metadata_prefix = $2
-          AND (
-                (r.status = $3 AND i.status = $4)
-             OR (r.status = $5 AND i.status = $6)
-          )
-          AND r.metadata->'repository' ? $7
-          AND ($8::TEXT IS NULL OR r.identifier > $8)
-          AND ($9::INT IS NULL OR i.attempts < $9)
-          AND ($10::TEXT IS NULL OR i.message ILIKE ('%' || $10 || '%'))
-        ORDER BY r.identifier
-        LIMIT 100
-        "#,
-    )
-    .bind(&params.scope.endpoint)
-    .bind(&params.scope.metadata_prefix)
-    .bind(OaiRecordStatus::Parsed.as_str())
-    .bind(parsed_index_status.as_str())
-    .bind(OaiRecordStatus::Deleted.as_str())
-    .bind(deleted_index_status.as_str())
-    .bind(params.source_repository)
-    .bind(params.last_identifier)
-    .bind(params.max_attempts)
-    .bind(params.message_filter)
-    .fetch_all(pool)
-    .await
+        // Failed rows only, with the budget and message filter applied
+        // uniformly (the --retry escape hatch).
+        IndexSelectionMode::FailedOnly => {
+            sqlx::query_as::<_, OaiRecord>(
+                r#"
+                SELECT r.id, r.identifier, r.fingerprint, r.status
+                FROM oai_records r
+                JOIN indexer_records i ON i.record_id = r.id
+                WHERE r.endpoint = $1
+                  AND r.metadata_prefix = $2
+                  AND (
+                        (r.status = $3 AND i.status = $4)
+                     OR (r.status = $5 AND i.status = $6)
+                  )
+                  AND r.metadata->'repository' ? $7
+                  AND ($8::INT IS NULL OR i.attempts < $8)
+                  AND ($9::TEXT IS NULL OR r.identifier > $9)
+                  AND ($10::TEXT IS NULL OR i.message ILIKE ('%' || $10 || '%'))
+                ORDER BY r.identifier
+                LIMIT 100
+                "#,
+            )
+            .bind(&params.scope.endpoint)
+            .bind(&params.scope.metadata_prefix)
+            .bind(OaiRecordStatus::Parsed.as_str())
+            .bind(OaiIndexStatus::IndexFailed.as_str())
+            .bind(OaiRecordStatus::Deleted.as_str())
+            .bind(OaiIndexStatus::PurgeFailed.as_str())
+            .bind(params.source_repository)
+            .bind(params.max_attempts)
+            .bind(params.last_identifier)
+            .bind(params.message_filter)
+            .fetch_all(pool)
+            .await
+        }
+    }
 }
 
 /// Batch reindex: reset the index lifecycle to pending for all parsed/deleted
@@ -142,6 +177,7 @@ pub async fn transition(
             UPDATE indexer_records
             SET status = $2,
                 message = '',
+                attempts = 0,
                 indexed_at = NOW(),
                 purged_at = NULL,
                 last_checked_at = NOW()
@@ -197,6 +233,7 @@ pub async fn transition(
             UPDATE indexer_records
             SET status = $2,
                 message = '',
+                attempts = 0,
                 indexed_at = NULL,
                 purged_at = NOW(),
                 last_checked_at = NOW()

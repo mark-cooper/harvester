@@ -21,7 +21,7 @@ fn records_with_status(records: Vec<OaiRecord>) -> Vec<(String, OaiRecordStatus)
 }
 
 #[tokio::test]
-async fn pending_candidate_queries_only_select_pending_records() -> anyhow::Result<()> {
+async fn standard_candidate_queries_select_pending_and_retryable_records() -> anyhow::Result<()> {
     let _guard = acquire_test_lock().await;
     let pool = setup_test_pool().await?;
 
@@ -37,6 +37,7 @@ async fn pending_candidate_queries_only_select_pending_records() -> anyhow::Resu
         metadata(REPOSITORY),
     )
     .await?;
+    // Failed under the attempts budget: retried by a standard run.
     insert_record_with_index(
         &pool,
         ENDPOINT,
@@ -73,23 +74,55 @@ async fn pending_candidate_queries_only_select_pending_records() -> anyhow::Resu
         metadata("Other Repository"),
     )
     .await?;
+    // Pending is always eligible regardless of attempts (a record that
+    // exhausted its index budget and was then deleted must still be purged).
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "e-pending-high-attempts",
+        DEFAULT_DATESTAMP,
+        "deleted",
+        "pending",
+        "old index failure",
+        7,
+        metadata(REPOSITORY),
+    )
+    .await?;
+    // At the budget: quarantined until --retry or --reindex.
+    insert_record_with_index(
+        &pool,
+        ENDPOINT,
+        "f-maxed-parsed",
+        DEFAULT_DATESTAMP,
+        "parsed",
+        "index_failed",
+        "boom",
+        5,
+        metadata(REPOSITORY),
+    )
+    .await?;
 
     let s = scope(ENDPOINT);
     let params = FetchIndexCandidatesParams {
         scope: &s,
         source_repository: REPOSITORY,
-        selection_mode: IndexSelectionMode::PendingOnly,
-        max_attempts: None,
+        selection_mode: IndexSelectionMode::Standard,
+        max_attempts: Some(5),
         message_filter: None,
         last_identifier: None,
     };
 
-    let pending = fetch(&pool, params).await?;
+    let candidates = fetch(&pool, params).await?;
     assert_eq!(
-        records_with_status(pending),
+        records_with_status(candidates),
         vec![
             ("a-pending-parsed".to_string(), OaiRecordStatus::Parsed),
+            ("b-failed-parsed".to_string(), OaiRecordStatus::Parsed),
             ("c-pending-deleted".to_string(), OaiRecordStatus::Deleted),
+            (
+                "e-pending-high-attempts".to_string(),
+                OaiRecordStatus::Deleted
+            ),
         ]
     );
 
@@ -225,6 +258,11 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "index-transition").await?;
     assert_eq!(snapshot.index_status.as_deref(), Some("indexed"));
     assert_eq!(snapshot.index_message.as_deref(), Some(""));
+    assert_eq!(
+        snapshot.index_attempts,
+        Some(0),
+        "success resets the attempts budget"
+    );
     assert!(snapshot.indexed_at_set);
     assert!(!snapshot.purged_at_set);
 
@@ -245,6 +283,11 @@ async fn transition_updates_set_expected_index_lifecycle_fields() -> anyhow::Res
     let snapshot = fetch_record_snapshot(&pool, ENDPOINT, "purge-transition").await?;
     assert_eq!(snapshot.index_status.as_deref(), Some("purged"));
     assert_eq!(snapshot.index_message.as_deref(), Some(""));
+    assert_eq!(
+        snapshot.index_attempts,
+        Some(0),
+        "success resets the attempts budget"
+    );
     assert!(snapshot.purged_at_set);
     assert!(!snapshot.indexed_at_set);
 
