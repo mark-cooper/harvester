@@ -19,6 +19,7 @@ pub struct ArcLightIndexerConfig {
     pub record_timeout_seconds: u64,
     pub solr_url: String,
     pub solr_commit_within_ms: u64,
+    pub solr_no_commit: bool,
 }
 
 pub fn build_config(cfg: ArcLightArgs) -> anyhow::Result<ArcLightIndexerConfig> {
@@ -34,6 +35,7 @@ pub fn build_config(cfg: ArcLightArgs) -> anyhow::Result<ArcLightIndexerConfig> 
         record_timeout_seconds: cfg.record_timeout_seconds,
         solr_url: cfg.solr_url,
         solr_commit_within_ms: cfg.solr_commit_within_ms,
+        solr_no_commit: cfg.no_commit,
     })
 }
 

@@ -71,6 +71,7 @@ fn build_config(
         record_timeout_seconds: 5,
         solr_url,
         solr_commit_within_ms: 1000,
+        solr_no_commit: false,
     }
 }
 

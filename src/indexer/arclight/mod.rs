@@ -104,29 +104,11 @@ impl ArcLightIndexer {
     }
 
     /// Delete a root document and all its nested children from Solr.
-    /// When `commit` is true, a hard commit is issued so the delete is visible
-    /// before any subsequent writes (needed for pre-index cleanup).
-    async fn solr_delete_by_root(&self, fingerprint: &str, commit: bool) -> anyhow::Result<()> {
-        let (payload, url) = if commit {
-            (
-                serde_json::json!({
-                    "delete": {
-                        "query": format!("_root_:{}", fingerprint)
-                    }
-                }),
-                format!("{}?commit=true", self.solr_update_url()),
-            )
-        } else {
-            (
-                serde_json::json!({
-                    "delete": {
-                        "query": format!("_root_:{}", fingerprint),
-                        "commitWithin": self.config.solr_commit_within_ms
-                    }
-                }),
-                self.solr_update_url(),
-            )
-        };
+    async fn solr_delete_by_root(&self, fingerprint: &str) -> anyhow::Result<()> {
+        let commit_within =
+            (!self.config.solr_no_commit).then_some(self.config.solr_commit_within_ms);
+        let payload = delete_by_root_payload(fingerprint, commit_within);
+        let url = self.solr_update_url();
 
         let response = match timeout(
             self.timeout_duration(),
@@ -166,6 +148,17 @@ impl ArcLightIndexer {
     fn timeout_duration(&self) -> Duration {
         Duration::from_secs(self.config.record_timeout_seconds)
     }
+}
+
+/// Build the Solr `/update` delete-by-query body for a root fingerprint.
+/// `commit_within_ms` adds a `commitWithin` directive when set; `None`
+/// (from `--no-commit`) omits it so visibility defers to Solr's autoCommit.
+fn delete_by_root_payload(fingerprint: &str, commit_within_ms: Option<u64>) -> serde_json::Value {
+    let mut delete = serde_json::json!({ "query": format!("_root_:{}", fingerprint) });
+    if let Some(ms) = commit_within_ms {
+        delete["commitWithin"] = serde_json::json!(ms);
+    }
+    serde_json::json!({ "delete": delete })
 }
 
 /// Drop Ruby Logger info/debug banner lines (`I, [timestamp #pid]  INFO -- : ...`)
@@ -209,7 +202,8 @@ impl Indexer for ArcLightIndexer {
         Box::pin(async move {
             // Delete existing root + nested children first to avoid orphaned
             // child documents when Solr re-indexes a nested document block.
-            self.solr_delete_by_root(&record.fingerprint, true).await?;
+            // Awaited before the add below so the delete is ordered ahead of it.
+            self.solr_delete_by_root(&record.fingerprint).await?;
 
             let output = self.run_traject(record).await?;
 
@@ -223,13 +217,29 @@ impl Indexer for ArcLightIndexer {
     }
 
     fn delete_record<'a>(&'a self, record: &'a OaiRecord) -> BoxFuture<'a, anyhow::Result<()>> {
-        Box::pin(async move { self.solr_delete_by_root(&record.fingerprint, false).await })
+        Box::pin(async move { self.solr_delete_by_root(&record.fingerprint).await })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::strip_ruby_logger_noise;
+    use super::{delete_by_root_payload, strip_ruby_logger_noise};
+
+    #[test]
+    fn delete_payload_includes_commit_within_by_default() {
+        let payload = delete_by_root_payload("abc123", Some(10_000));
+        let delete = &payload["delete"];
+        assert_eq!(delete["query"], "_root_:abc123");
+        assert_eq!(delete["commitWithin"], 10_000);
+    }
+
+    #[test]
+    fn delete_payload_omits_commit_within_when_no_commit() {
+        let payload = delete_by_root_payload("abc123", None);
+        let delete = &payload["delete"];
+        assert_eq!(delete["query"], "_root_:abc123");
+        assert!(delete.get("commitWithin").is_none());
+    }
 
     #[test]
     fn drops_info_and_debug_banner_lines() {

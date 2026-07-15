@@ -54,6 +54,11 @@ pub struct ArcLightArgs {
     #[arg(long)]
     pub max_attempts: Option<i32>,
 
+    /// Issue no commit directives to Solr; defer all commit visibility to
+    /// Solr's autoCommit config. Takes precedence over --solr-commit-within-ms.
+    #[arg(long, default_value_t = false)]
+    pub no_commit: bool,
+
     /// Solr url
     #[arg(
         short,
